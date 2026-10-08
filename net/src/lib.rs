@@ -1,4 +1,8 @@
 //! Browser bindings for one intersched room: an iroh-gossip topic plus a QR helper.
+//!
+//! A room is named by a few words. The words give the gossip topic and a signing key for a
+//! record on the n0 pkarr relay. Every phone in the room lists itself in that record, so a
+//! phone with only the words can find someone to join.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -7,26 +11,40 @@ use std::{
 
 use data_encoding::BASE64URL_NOPAD;
 use iroh::{
-    EndpointAddr, EndpointId, RelayUrl, SecretKey, address_lookup::MemoryLookup, endpoint::presets,
+    EndpointAddr, EndpointId, RelayUrl, SecretKey,
+    address_lookup::{MemoryLookup, pkarr::PkarrRelayClient},
+    endpoint::presets,
     protocol::Router,
 };
+use iroh_dns::pkarr::SignedPacket;
 use iroh_gossip::{
     api::{Event, GossipSender},
     net::{GOSSIP_ALPN, Gossip},
     proto::TopicId,
 };
 use js_sys::{Object, Reflect};
-use n0_future::StreamExt;
+use n0_future::{
+    StreamExt,
+    task::{self, AbortOnDropHandle},
+    time::{Duration, Instant, sleep},
+};
 use wasm_bindgen::prelude::*;
 use wasm_streams::ReadableStream;
 
 /// Room state is broadcast whole, so allow more than the 4 KiB default.
 const MAX_MESSAGE_SIZE: usize = 64 * 1024;
-/// Peers named in a ticket. More peers make the QR code denser.
-const TICKET_PEERS: usize = 3;
+const PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
+const RECORD_NAME: &str = "_intersched";
+/// A pkarr packet holds at most 1000 bytes, and each entry takes about 100.
+const RECORD_PEERS: usize = 6;
+const RECORD_TTL: u32 = 300;
+/// While alone, look for peers this often.
+const ALONE_INTERVAL: Duration = Duration::from_secs(4);
+/// While connected, refresh the record this often.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(120);
 
-/// Peers we can name in a ticket. The relay URL lets a joiner dial a peer
-/// before that peer's address reaches the n0 address lookup.
+/// Peers we know of, with a relay URL when we have one. The relay URL lets us dial a peer
+/// before its own address reaches the n0 address lookup.
 type Peers = BTreeMap<EndpointId, Option<RelayUrl>>;
 
 #[wasm_bindgen(start)]
@@ -36,30 +54,25 @@ fn start() {
 
 #[wasm_bindgen]
 pub struct Room {
-    topic: TopicId,
     secret: SecretKey,
-    me: Option<RelayUrl>,
-    bootstrap: Peers,
     neighbors: Arc<Mutex<BTreeSet<EndpointId>>>,
     sender: GossipSender,
     events: Option<wasm_streams::readable::sys::ReadableStream>,
+    _rendezvous: AbortOnDropHandle<()>,
     _router: Router,
 }
 
 #[wasm_bindgen]
 impl Room {
-    /// Joins the room in `ticket`, or opens a new room when `ticket` is empty.
+    /// Joins the room named by `words`.
     /// `secret` is a base64url endpoint key from an earlier session, or empty for a new one.
-    pub async fn open(ticket: String, secret: String) -> Result<Room, JsError> {
-        let (topic, bootstrap) = if ticket.is_empty() {
-            (TopicId::from_bytes(rand::random()), Peers::new())
-        } else {
-            decode_ticket(&ticket)?
-        };
+    pub async fn open(words: String, secret: String) -> Result<Room, JsError> {
         let secret = match BASE64URL_NOPAD.decode(secret.as_bytes()).ok().and_then(|b| <[u8; 32]>::try_from(b).ok()) {
             Some(bytes) => SecretKey::from_bytes(&bytes),
             None => SecretKey::generate(),
         };
+        let topic = TopicId::from_bytes(blake3::derive_key("intersched 2026-10 topic", words.as_bytes()));
+        let record_key = SecretKey::from_bytes(&blake3::derive_key("intersched 2026-10 record", words.as_bytes()));
 
         let endpoint = iroh::Endpoint::builder(presets::N0)
             .secret_key(secret.clone())
@@ -67,26 +80,38 @@ impl Room {
             .bind()
             .await
             .map_err(js_err)?;
-        let known = MemoryLookup::new();
-        for (id, relay) in &bootstrap {
-            if let Some(relay) = relay {
-                known.add_endpoint_info(EndpointAddr::new(*id).with_relay_url(relay.clone()));
-            }
-        }
-        endpoint.address_lookup().map_err(js_err)?.add(known);
-        // Our ticket must carry a relay URL, so wait until we have one.
+        let lookup = MemoryLookup::new();
+        endpoint.address_lookup().map_err(js_err)?.add(lookup.clone());
+        // Our record entry must carry a relay URL, so wait until we have one.
         endpoint.online().await;
-        let me = endpoint.addr().relay_urls().next().cloned();
+        let my_relay = endpoint.addr().relay_urls().next().cloned();
 
         let gossip = Gossip::builder()
             .max_message_size(MAX_MESSAGE_SIZE)
             .spawn(endpoint.clone());
         let router = Router::builder(endpoint).accept(GOSSIP_ALPN, gossip.clone()).spawn();
 
-        let my_id = secret.public();
-        let peers: Vec<_> = bootstrap.keys().copied().filter(|id| *id != my_id).collect();
-        let (sender, receiver) = gossip.subscribe(topic, peers).await.map_err(js_err)?.split();
+        let record = Record { client: PkarrRelayClient::new(PKARR_RELAY.parse().unwrap()), key: record_key };
+        let me = secret.public();
+        let mut known = record.read().await;
+        known.remove(&me);
+        seed(&lookup, &known);
+        let (sender, receiver) = gossip
+            .subscribe(topic, known.keys().copied().collect())
+            .await
+            .map_err(js_err)?
+            .split();
+
         let neighbors = Arc::new(Mutex::new(BTreeSet::new()));
+        let rendezvous = AbortOnDropHandle::new(task::spawn(rendezvous(
+            record,
+            lookup,
+            sender.clone(),
+            neighbors.clone(),
+            (me, my_relay),
+            known,
+        )));
+
         let tracked = neighbors.clone();
         let events = receiver.filter_map(move |event| {
             let event = match event {
@@ -116,13 +141,11 @@ impl Room {
         });
 
         Ok(Room {
-            topic,
             secret,
-            me,
-            bootstrap,
             neighbors,
             sender,
             events: Some(ReadableStream::from_stream(events).into_raw()),
+            _rendezvous: rendezvous,
             _router: router,
         })
     }
@@ -131,25 +154,6 @@ impl Room {
     /// It can be taken once.
     pub fn events(&mut self) -> Option<wasm_streams::readable::sys::ReadableStream> {
         self.events.take()
-    }
-
-    /// A ticket to join this room, naming this endpoint and the peers it knows.
-    pub fn ticket(&self) -> String {
-        let mut peers = vec![(self.secret.public(), self.me.clone())];
-        let neighbors = self.neighbors.lock().unwrap();
-        // Prefer peers that are online now, then the ones we were invited by.
-        peers.extend(neighbors.iter().map(|id| (*id, self.bootstrap.get(id).cloned().flatten())));
-        peers.extend(self.bootstrap.iter().map(|(id, r)| (*id, r.clone())));
-        let mut seen = BTreeSet::new();
-
-        let mut bytes = self.topic.as_bytes().to_vec();
-        for (id, relay) in peers.into_iter().filter(|(id, _)| seen.insert(*id)).take(TICKET_PEERS) {
-            bytes.extend_from_slice(id.as_bytes());
-            let relay = relay.map(|r| r.to_string()).unwrap_or_default();
-            bytes.push(relay.len().min(255) as u8);
-            bytes.extend_from_slice(&relay.as_bytes()[..relay.len().min(255)]);
-        }
-        BASE64URL_NOPAD.encode(&bytes)
     }
 
     /// The endpoint key, to rejoin with the same identity after a reload.
@@ -166,6 +170,98 @@ impl Room {
     }
 }
 
+/// The room's record on the pkarr relay: one TXT entry `<id> <relay url>` per phone.
+struct Record {
+    client: PkarrRelayClient,
+    key: SecretKey,
+}
+
+impl Record {
+    async fn read(&self) -> Peers {
+        let Ok(packet) = self.client.resolve(self.key.public()).await else {
+            return Peers::new();
+        };
+        packet
+            .txt_records(RECORD_NAME)
+            .iter()
+            .filter_map(|entry| {
+                let (id, relay) = entry.split_once(' ').unwrap_or((entry, ""));
+                let id = <[u8; 32]>::try_from(BASE64URL_NOPAD.decode(id.as_bytes()).ok()?).ok()?;
+                Some((EndpointId::from_bytes(&id).ok()?, relay.parse::<RelayUrl>().ok()))
+            })
+            .collect()
+    }
+
+    async fn write(&self, peers: &[(EndpointId, Option<RelayUrl>)]) {
+        let entries = peers.iter().take(RECORD_PEERS).map(|(id, relay)| {
+            let relay = relay.as_ref().map(|r| r.to_string()).unwrap_or_default();
+            format!("{} {relay}", BASE64URL_NOPAD.encode(id.as_bytes()))
+        });
+        match SignedPacket::from_txt_strings(&self.key, RECORD_NAME, entries, RECORD_TTL) {
+            Ok(packet) => {
+                if let Err(err) = self.client.publish(&packet).await {
+                    tracing::warn!("room record publish failed: {err}");
+                }
+            }
+            Err(err) => tracing::warn!("room record too large: {err}"),
+        }
+    }
+}
+
+fn seed(lookup: &MemoryLookup, peers: &Peers) {
+    for (id, relay) in peers {
+        if let Some(relay) = relay {
+            lookup.add_endpoint_info(EndpointAddr::new(*id).with_relay_url(relay.clone()));
+        }
+    }
+}
+
+/// Keeps this phone listed in the room record, and dials the listed phones while alone.
+async fn rendezvous(
+    record: Record,
+    lookup: MemoryLookup,
+    sender: GossipSender,
+    neighbors: Arc<Mutex<BTreeSet<EndpointId>>>,
+    me: (EndpointId, Option<RelayUrl>),
+    mut known: Peers,
+) {
+    let mut written: Option<(Vec<EndpointId>, Instant)> = None;
+    loop {
+        let alone = neighbors.lock().unwrap().is_empty();
+        if alone && written.is_some() {
+            let mut fresh = record.read().await;
+            fresh.remove(&me.0);
+            seed(&lookup, &fresh);
+            let ids: Vec<_> = fresh.keys().copied().collect();
+            if !ids.is_empty() {
+                sender.join_peers(ids).await.ok();
+            }
+            known.extend(fresh);
+        }
+
+        // List us first, then the phones we are connected to, then the rest of the old record.
+        let connected = neighbors.lock().unwrap().clone();
+        let mut entries = vec![me.clone()];
+        entries.extend(connected.iter().map(|id| (*id, known.get(id).cloned().flatten())));
+        entries.extend(known.iter().filter(|(id, _)| !connected.contains(*id)).map(|(id, r)| (*id, r.clone())));
+        let mut seen = BTreeSet::new();
+        entries.retain(|(id, _)| seen.insert(*id));
+        entries.truncate(RECORD_PEERS);
+
+        let ids: Vec<_> = entries.iter().map(|(id, _)| *id).collect();
+        let stale = match &written {
+            None => true,
+            Some((last, at)) => *last != ids || at.elapsed() > REFRESH_INTERVAL,
+        };
+        if stale {
+            record.write(&entries).await;
+            written = Some((ids, Instant::now()));
+        }
+
+        sleep(if alone { ALONE_INTERVAL } else { Duration::from_secs(15) }).await;
+    }
+}
+
 /// An SVG QR code for `text`. Phone cameras read black on white with a quiet zone most reliably,
 /// so it keeps those colours in dark mode too.
 #[wasm_bindgen]
@@ -177,24 +273,6 @@ pub fn qr_svg(text: &str) -> Result<String, JsError> {
         .dark_color(qrcode::render::svg::Color("#000000"))
         .light_color(qrcode::render::svg::Color("#ffffff"))
         .build())
-}
-
-/// A ticket is the topic, then per peer its 32-byte id, a length byte and its relay URL.
-fn decode_ticket(ticket: &str) -> Result<(TopicId, Peers), JsError> {
-    let damaged = || JsError::new("This invite link is damaged.");
-    let bytes = BASE64URL_NOPAD.decode(ticket.as_bytes()).map_err(|_| damaged())?;
-    let (topic, mut rest) = bytes.split_first_chunk::<32>().ok_or_else(damaged)?;
-    let mut peers = Peers::new();
-    while !rest.is_empty() {
-        let (id, tail) = rest.split_first_chunk::<32>().ok_or_else(damaged)?;
-        let (len, tail) = tail.split_first().ok_or_else(damaged)?;
-        let (relay, tail) = tail.split_at_checked(*len as usize).ok_or_else(damaged)?;
-        let id = EndpointId::from_bytes(id).map_err(|_| damaged())?;
-        let relay = std::str::from_utf8(relay).ok().and_then(|r| r.parse::<RelayUrl>().ok());
-        peers.insert(id, relay);
-        rest = tail;
-    }
-    Ok((TopicId::from_bytes(*topic), peers))
 }
 
 fn js_err(err: impl std::fmt::Display) -> JsError {

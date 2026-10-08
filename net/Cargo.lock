@@ -1142,10 +1142,12 @@ name = "intersched-net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "console_error_panic_hook",
  "data-encoding",
  "getrandom 0.3.4",
  "iroh",
+ "iroh-dns",
  "iroh-gossip",
  "js-sys",
  "n0-future",
@@ -1153,6 +1155,7 @@ dependencies = [
  "rand",
  "serde",
  "serde-wasm-bindgen",
+ "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",

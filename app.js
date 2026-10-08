@@ -1,3 +1,5 @@
+import { WORDS } from "./words.js";
+
 // A game is a setup plus one record per (week, player): the slots that player can make,
 // and whether they are done. Both modes share it; own-phone mode merges records over gossip.
 
@@ -103,15 +105,32 @@ function render() {
 }
 
 // ---------- shared pieces ----------
-function gridHtml(g, w, viewer, editable) {
+// The shortest name prefix that tells each player apart, so Ann and Alex show as An and Al.
+function tags(players) {
+  return players.map((p) => {
+    for (let len = 1; len < p.length; len++) {
+      const t = p.slice(0, len).toLowerCase();
+      if (players.filter((q) => q.slice(0, len).toLowerCase() === t).length === 1) return p.slice(0, len);
+    }
+    return p;
+  });
+}
+
+// `live` lists who else has ticked each slot so far, for own-phone mode.
+function gridHtml(g, w, viewer, editable, live = false) {
   const n = g.setup.slots.length, open = openFor(g, w, viewer), mine = picks(g, w, viewer);
+  const others = live ? g.setup.players.map((_, p) => p).filter((p) => p !== viewer).map((p) => [p, picks(g, w, p)]) : [];
+  const tag = tags(g.setup.players);
   let out = `<div></div>` + g.setup.slots.map((s) => `<div class="head">${h(s)}</div>`).join("");
   for (let day = 0; day < 7; day++) {
     const d = addDays(g.setup.start, 7 * w + day), wk = d.getDay() === 0 || d.getDay() === 6;
     out += `<div class="day ${wk ? "weekend" : ""}">${d.toLocaleDateString("en-GB", { weekday: "short" })}<span>${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></div>`;
     for (let s = 0; s < n; s++) {
       const idx = day * n + s, yes = mine.has(idx), x = !open.has(idx);
-      out += `<button class="cell ${yes ? "yes" : ""} ${x ? "x" : ""}" data-idx="${idx}" aria-pressed="${yes}" ${editable ? "" : "disabled"} aria-label="${h(g.setup.slots[s])}${x ? ", someone can't" : ""}">${x ? "×" : yes ? "✓" : ""}</button>`;
+      const who = others.filter(([, set]) => set.has(idx)).map(([p]) => p);
+      const ini = who.length ? `<span class="ini">${who.map((p) => h(tag[p])).join(" ")}</span>` : "";
+      const label = `${g.setup.slots[s]}${x ? ", someone can't" : ""}${who.length ? `, ${who.map((p) => g.setup.players[p]).join(", ")} can` : ""}`;
+      out += `<button class="cell ${yes ? "yes" : ""} ${x ? "x" : ""}" data-idx="${idx}" aria-pressed="${yes}" ${editable ? "" : "disabled"} aria-label="${h(label)}">${x ? "×" : yes ? "✓" : ""}${ini}</button>`;
     }
   }
   return `<div class="week" style="grid-template-columns: 4.2em repeat(${n}, minmax(0, 1fr))">${out}</div>`;
@@ -180,7 +199,15 @@ function renderSetup() {
     <div class="modes">
       <button class="primary" id="go-pass">${h(passLabel())}</button>
       <button class="secondary" id="go-net">Everyone on their own phone</button>
-    </div>`;
+    </div>
+    <form class="join" id="join">
+      <label class="label" for="code">Room words from another phone</label>
+      <div class="row">
+        <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <button class="secondary" type="submit">Join</button>
+      </div>
+      <div class="error" id="join-err"></div>
+    </form>`;
 
   app.querySelectorAll("input[data-key]").forEach((el) => el.addEventListener("input", () => {
     D[el.dataset.key][+el.dataset.i] = el.value; save();
@@ -212,7 +239,13 @@ function renderSetup() {
   };
   document.getElementById("go-net").onclick = () => {
     const g = validSetup(); if (!g) return;
-    openRoom("", g);
+    openRoom(newWords(), g);
+  };
+  document.getElementById("join").onsubmit = (e) => {
+    e.preventDefault();
+    const words = parseWords(document.getElementById("code").value);
+    if (!words) return void (document.getElementById("join-err").textContent = `Type the ${ROOM_WORDS} words shown on the other phone.`);
+    openRoom(words);
   };
 }
 
@@ -301,25 +334,28 @@ function renderDone() {
 }
 
 // ---------- own phone ----------
-function inviteUrl() {
-  return `${location.origin}${location.pathname}#join=${NET.room ? NET.room.ticket() : ""}`;
-}
+// A room is four words; the words alone are enough to find it.
+const ROOM_WORDS = 4;
+const newWords = () => Array.from(crypto.getRandomValues(new Uint32Array(ROOM_WORDS)), (n) => WORDS[n % WORDS.length]).join("-");
+const parseWords = (text) => {
+  const words = (text.toLowerCase().match(/[a-z]+/g) || []);
+  return words.length === ROOM_WORDS && words.every((w) => WORDS.includes(w)) ? words.join("-") : null;
+};
+const inviteUrl = () => `${location.origin}${location.pathname}#${NET.words}`;
 
-async function openRoom(ticket, hostGame) {
-  const key = ticket.slice(0, 43);
-  const saved = ticket ? store.get(roomKey(key)) : null;
-  NET = { key: ticket ? key : null, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame };
+async function openRoom(words, hostGame) {
+  const saved = store.get(roomKey(words));
+  NET = { key: words, words, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame };
   S.game = hostGame || saved?.game || { setup: null, recs: {} };
   S.me = saved?.me ?? null;
   S.sel = saved?.sel ?? null;
+  history.replaceState(null, "", `#${words}`);
   render();
   try {
     NET.mod = await import("./pkg/intersched_net.js");
     await NET.mod.default();
-    NET.room = await NET.mod.Room.open(ticket, NET.secret);
+    NET.room = await NET.mod.Room.open(words, NET.secret);
     NET.secret = NET.room.secret();
-    NET.key = NET.room.ticket().slice(0, 43);
-    updateHash();
     pump(NET.room.events());
     broadcast();
     setInterval(broadcast, 15000);
@@ -328,10 +364,6 @@ async function openRoom(ticket, hostGame) {
     NET.error = e?.message || String(e);
   }
   render();
-}
-
-function updateHash() {
-  if (NET?.room) history.replaceState(null, "", `#join=${NET.room.ticket()}`);
 }
 
 async function pump(stream) {
@@ -343,7 +375,6 @@ async function pump(stream) {
     const ev = next.value;
     NET.peers = ev.peers;
     if (ev.type === "up") broadcast();
-    if (ev.type === "up" || ev.type === "down") updateHash();
     if (ev.type === "msg") {
       try { merge(S.game, JSON.parse(ev.data).s); } catch {}
     }
@@ -375,7 +406,7 @@ function renderNet() {
       ${bar()}
       <div class="center">
         <div class="qr">${NET.mod.qr_svg(url)}</div>
-        <div class="linkbox" id="link">${h(url)}</div>
+        <div class="words" id="words">${h(NET.words.replaceAll("-", " "))}</div>
         <button class="secondary" id="copy-link">Copy link</button>
       </div>
       <button class="primary" id="close">${S.me == null ? "Pick your name" : "Back to the week"}</button>`;
@@ -430,7 +461,7 @@ function renderNet() {
       <div class="who">${h(P[me])}</div>
       <div class="who-sub">${done ? "Your picks are in." : "Tap every slot you can make."}</div>
     </div>
-    ${gridHtml(g, w, me, !done)}
+    ${gridHtml(g, w, me, !done, true)}
     <div class="count"><b>${left}</b> of ${openFor(g, w, me).size} open slots work for you${info.done.filter((p) => p !== me).length ? " and everyone who's done" : ""}</div>
     ${seatsHtml(g, w, me)}
     ${done
@@ -457,6 +488,6 @@ function bindFoot() {
 }
 
 // ---------- boot ----------
-const join = location.hash.match(/^#join=([A-Za-z0-9_-]+)$/);
-if (join) openRoom(join[1]);
+const join = parseWords(decodeURIComponent(location.hash.slice(1)));
+if (join) openRoom(join);
 else render();

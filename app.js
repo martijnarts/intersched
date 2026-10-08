@@ -32,7 +32,8 @@ document.documentElement.lang = LANG;
 function iso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function parseIso(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 const addDays = (s, n) => { const d = parseIso(s); d.setDate(d.getDate() + n); return d; };
-const tomorrow = () => iso(addDays(iso(new Date()), 1));
+const today = () => iso(new Date());
+const mondayOf = (s) => { const d = parseIso(s); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return iso(d); };
 const fmtDay = (d) => d.toLocaleDateString(t("locale"), { weekday: "long", day: "numeric", month: "long" });
 const fmtRange = (s, w) => {
   const o = { day: "numeric", month: "short" };
@@ -46,9 +47,12 @@ const nCells = (g) => 7 * g.setup.slots.length;
 const recOf = (g, w, p) => g.recs[`${w}|${p}`];
 const picks = (g, w, p) => new Set(recOf(g, w, p)?.cells || []);
 
+// A slot on a day before today can no longer happen.
+const isPast = (g, w, idx) => iso(addDays(g.setup.start, 7 * w + Math.floor(idx / g.setup.slots.length))) < today();
+
 // Cells every done player except `viewer` picked. A cell outside it can no longer work.
 function openFor(g, w, viewer) {
-  const open = new Set(Array.from({ length: nCells(g) }, (_, i) => i));
+  const open = new Set(Array.from({ length: nCells(g) }, (_, i) => i).filter((i) => !isPast(g, w, i)));
   g.setup.players.forEach((_, p) => {
     if (p === viewer || !recOf(g, w, p)?.done) return;
     const mine = picks(g, w, p);
@@ -78,7 +82,18 @@ function merge(g, incoming) {
   for (const [k, r] of Object.entries(incoming.recs || {})) {
     if (!g.recs[k] || newer(r, g.recs[k])) { g.recs[k] = r; changed = true; }
   }
+  g.claims ??= {};
+  for (const [k, c] of Object.entries(incoming.claims || {})) {
+    if (!g.claims[k] || newer(c, g.claims[k])) { g.claims[k] = c; changed = true; }
+  }
   return changed;
+}
+
+// A claim says which phone holds a player's name. `by` is null once the phone lets go.
+function setClaim(g, p, by) {
+  g.claims ??= {};
+  const old = g.claims[p];
+  g.claims[p] = { by, ts: Math.max(Date.now(), (old?.ts || 0) + 1) };
 }
 
 // ---------- state ----------
@@ -87,13 +102,14 @@ const fresh = (prev) => ({
   draft: {
     players: prev?.draft?.players?.length ? prev.draft.players : ["", "", ""],
     slots: prev?.draft?.slots?.length ? prev.draft.slots : [...t("defaultSlots")],
-    start: tomorrow(),
+    start: mondayOf(today()),
   },
   game: null, turn: 0, history: [], sel: null,
 });
 
 let S = store.get(KEY) || fresh();
-if (S.screen === "setup" && !(S.draft.start >= iso(new Date()))) S.draft.start = tomorrow();
+// Planning starts on a Monday, this week or later.
+if (S.screen === "setup" && !(S.draft.start === mondayOf(S.draft.start || today()) && S.draft.start >= mondayOf(today()))) S.draft.start = mondayOf(today());
 
 // Own-phone mode. Lives only in memory; the room's game is saved under its topic.
 let NET = null;
@@ -136,7 +152,12 @@ function gridHtml(g, w, viewer, editable, live = false) {
     const d = addDays(g.setup.start, 7 * w + day), wk = d.getDay() === 0 || d.getDay() === 6;
     out += `<div class="day ${wk ? "weekend" : ""}">${d.toLocaleDateString(t("locale"), { weekday: "short" })}<span>${d.toLocaleDateString(t("locale"), { day: "numeric", month: "short" })}</span></div>`;
     for (let s = 0; s < n; s++) {
-      const idx = day * n + s, yes = mine.has(idx), x = !open.has(idx);
+      const idx = day * n + s;
+      if (isPast(g, w, idx)) {
+        out += `<button class="cell past" disabled aria-label="${h(`${g.setup.slots[s]}, ${t("past")}`)}"></button>`;
+        continue;
+      }
+      const yes = mine.has(idx), x = !open.has(idx);
       const who = others.filter(([, set]) => set.has(idx)).map(([p]) => p);
       const ini = who.length ? `<span class="ini">${who.map((p) => h(tag[p])).join(" ")}</span>` : "";
       const label = `${g.setup.slots[s]}${x ? t("cellX") : ""}${who.length ? t("cellWho", list(who.map((p) => g.setup.players[p])), who.length) : ""}`;
@@ -182,47 +203,69 @@ function bindTwoTap(id, label, action) {
 // ---------- setup ----------
 function renderSetup() {
   const D = S.draft;
+  // The × buttons stay out of the tab order, so Tab and the keyboard's next key go name to name.
   const listRows = (key, ph) => D[key].map((v, i) => `
     <div class="row">
       <span class="num">${i + 1}</span>
-      <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off">
-      <button class="icon-btn" data-del="${key}" data-i="${i}" aria-label="${t("remove")}">×</button>
+      <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off" enterkeyhint="next">
+      <button type="button" class="icon-btn" data-del="${key}" data-i="${i}" tabindex="-1" aria-label="${t("remove")}">×</button>
     </div>`).join("");
   const passLabel = () => t("passOne", D.players.find((p) => p.trim()) || t("playerOne"));
+  const ahead = Math.round((parseIso(D.start) - parseIso(mondayOf(today()))) / (7 * 864e5));
+  const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : "";
   app.innerHTML = `
-    <div class="brand">intersched <button class="lang" id="lang">${t("other").toUpperCase()}</button></div>
-    <fieldset>
-      <span class="label">${t("players")}</span>
-      ${listRows("players", t("name"))}
-      <button class="ghost" data-add="players">${t("addPlayer")}</button>
-    </fieldset>
-    <fieldset>
-      <span class="label">${t("slots")}</span>
-      ${listRows("slots", t("slotExample"))}
-      <button class="ghost" data-add="slots">${t("addSlot")}</button>
-    </fieldset>
-    <fieldset>
-      <label class="label" for="start">${t("firstDay")}</label>
-      <input id="start" type="date" value="${D.start}" min="${iso(new Date())}">
-    </fieldset>
-    <div class="error" id="err"></div>
-    <div class="modes">
-      <button class="primary" id="go-pass">${h(passLabel())}</button>
-      <button class="secondary" id="go-net">${t("ownPhones")}</button>
-    </div>
+    <div class="brand">intersched <button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button></div>
+    <form class="setup" id="setup" novalidate>
+      <fieldset>
+        <span class="label">${t("players")}</span>
+        ${listRows("players", t("name"))}
+        <button type="button" class="ghost" data-add="players">${t("addPlayer")}</button>
+      </fieldset>
+      <fieldset>
+        <span class="label">${t("slots")}</span>
+        ${listRows("slots", t("slotExample"))}
+        <button type="button" class="ghost" data-add="slots">${t("addSlot")}</button>
+      </fieldset>
+      <fieldset>
+        <span class="label">${t("week")}</span>
+        <div class="stepper">
+          <button type="button" id="wk-prev" aria-label="${t("earlier")}" ${ahead <= 0 ? "disabled" : ""}>‹</button>
+          <span>${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span>
+          <button type="button" id="wk-next" aria-label="${t("later")}">›</button>
+        </div>
+      </fieldset>
+      <div class="error" id="err"></div>
+      <div class="modes">
+        <button type="button" class="primary" id="go-pass">${h(passLabel())}</button>
+        <button type="button" class="secondary" id="go-net">${t("ownPhones")}</button>
+      </div>
+    </form>
     <form class="join" id="join">
       <label class="label" for="code">${t("joinWords")}</label>
       <div class="row">
-        <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
         <button class="secondary" type="submit">${t("join")}</button>
       </div>
       <div class="error" id="join-err"></div>
     </form>`;
 
-  app.querySelectorAll("input[data-key]").forEach((el) => el.addEventListener("input", () => {
-    D[el.dataset.key][+el.dataset.i] = el.value; save();
-    if (el.dataset.key === "players") document.getElementById("go-pass").textContent = passLabel();
-  }));
+  document.getElementById("setup").onsubmit = (e) => e.preventDefault();
+  app.querySelectorAll("input[data-key]").forEach((el) => {
+    el.addEventListener("input", () => {
+      D[el.dataset.key][+el.dataset.i] = el.value; save();
+      if (el.dataset.key === "players") document.getElementById("go-pass").textContent = passLabel();
+    });
+    // Enter moves to the next row. On the last filled row it adds one.
+    el.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const k = el.dataset.key, i = +el.dataset.i;
+      if (i < D[k].length - 1) return document.getElementById(`${k}-${i + 1}`).focus();
+      if (el.value.trim()) { D[k].push(""); render(); return document.getElementById(`${k}-${i + 1}`).focus(); }
+      if (k === "players") return document.getElementById("slots-0").focus();
+      el.blur();
+    });
+  });
   app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
     const k = b.dataset.add; D[k].push(""); render();
     document.getElementById(`${k}-${D[k].length - 1}`).focus();
@@ -230,7 +273,8 @@ function renderSetup() {
   app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
     const k = b.dataset.del; if (D[k].length > 1) D[k].splice(+b.dataset.i, 1); else D[k][0] = ""; render();
   });
-  document.getElementById("start").onchange = (e) => { D.start = e.target.value; save(); };
+  document.getElementById("wk-prev").onclick = () => { D.start = iso(addDays(D.start, -7)); render(); };
+  document.getElementById("wk-next").onclick = () => { D.start = iso(addDays(D.start, 7)); render(); };
   document.getElementById("lang").onclick = () => {
     const before = t("defaultSlots");
     LANG = t("other");
@@ -248,9 +292,8 @@ function renderSetup() {
     if (players.length < 2) return void (err.textContent = t("needPlayers"));
     if (new Set(players).size !== players.length) return void (err.textContent = t("uniqueNames"));
     if (!slots.length) return void (err.textContent = t("needSlot"));
-    if (!D.start) return void (err.textContent = t("needDay"));
     D.players = players; D.slots = slots;
-    return { setup: { players, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {} };
+    return { setup: { players, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {}, claims: {} };
   };
   document.getElementById("go-pass").onclick = () => {
     const g = validSetup(); if (!g) return;
@@ -364,7 +407,7 @@ const inviteUrl = () => `${location.origin}${location.pathname}#${NET.words}`;
 
 async function openRoom(words, hostGame) {
   const saved = store.get(roomKey(words));
-  NET = { key: words, words, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame };
+  NET = { key: words, words, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame, seen: {}, notice: null };
   S.game = hostGame || saved?.game || { setup: null, recs: {} };
   S.me = saved?.me ?? null;
   S.sel = saved?.sel ?? null;
@@ -377,7 +420,8 @@ async function openRoom(words, hostGame) {
     NET.secret = NET.room.secret();
     pump(NET.room.events());
     broadcast();
-    setInterval(broadcast, 15000);
+    // The broadcast doubles as a heartbeat; names of phones that went quiet free up.
+    setInterval(() => { broadcast(); if (S.me == null && !NET.invite) render(); }, 15000);
   } catch (e) {
     console.error(e);
     NET.error = e?.message || String(e);
@@ -395,7 +439,7 @@ async function pump(stream) {
     NET.peers = ev.peers;
     if (ev.type === "up") broadcast();
     if (ev.type === "msg") {
-      try { merge(S.game, JSON.parse(ev.data).s); } catch {}
+      try { const m = JSON.parse(ev.data); NET.seen[m.from] = Date.now(); merge(S.game, m.s); } catch {}
     }
     render();
   }
@@ -404,7 +448,7 @@ async function pump(stream) {
 // Gossip drops repeats of identical messages, so each broadcast carries a nonce.
 function broadcast() {
   if (!NET?.room || !S.game?.setup) return;
-  NET.room.broadcast(JSON.stringify({ n: Math.random(), s: { setup: S.game.setup, recs: S.game.recs } })).catch((e) => console.warn(e));
+  NET.room.broadcast(JSON.stringify({ n: Math.random(), from: DEVICE, s: { setup: S.game.setup, recs: S.game.recs, claims: S.game.claims || {} } })).catch((e) => console.warn(e));
 }
 
 function peersPill() {
@@ -413,7 +457,25 @@ function peersPill() {
   return `<span class="pill ${NET.peers ? "live" : ""}">${NET.peers ? t("others", NET.peers) : t("alone")}</span>`;
 }
 
-function leave() { history.replaceState(null, "", location.pathname); location.reload(); }
+// A phone holds a name while it keeps broadcasting.
+const CLAIM_TIMEOUT = 45000;
+function takenByOther(g, p) {
+  const c = g.claims?.[p];
+  return !!c?.by && c.by !== DEVICE && Date.now() - (NET.seen[c.by] || 0) < CLAIM_TIMEOUT;
+}
+
+function release() {
+  if (S.me == null || !S.game?.setup) return Promise.resolve();
+  setClaim(S.game, S.me, null);
+  S.me = null;
+  return NET.room ? NET.room.broadcast(JSON.stringify({ n: Math.random(), from: DEVICE, s: { claims: S.game.claims } })).catch(() => {}) : Promise.resolve();
+}
+
+async function leave() {
+  await release();
+  history.replaceState(null, "", location.pathname);
+  location.reload();
+}
 
 function renderNet() {
   const g = S.game;
@@ -450,12 +512,24 @@ function renderNet() {
 
   const w = currentWeek(g), P = g.setup.players, info = weekInfo(g, w);
 
+  // Someone else took our name, or we came back to a name that is ours again.
+  if (S.me != null && S.me < P.length && g.claims?.[S.me]?.by !== DEVICE) {
+    if (takenByOther(g, S.me)) { NET.notice = t("lostClaim", P[S.me]); S.me = null; }
+    else { setClaim(g, S.me, DEVICE); broadcast(); }
+  }
+
   if (S.me == null || S.me >= P.length) {
+    const notice = NET.notice; NET.notice = null;
     app.innerHTML = `
       ${bar(NET.room ? `<button id="invite">${t("invite")}</button>` : "")}
+      ${notice ? `<div class="notice">${h(notice)}</div>` : ""}
       <div class="done-head">${t("whoAreYou")}</div>
-      <div class="people">${P.map((p, i) => `<button class="person" data-me="${i}">${h(p)}${recOf(g, w, i)?.done ? `<span>${t("doneTag")}</span>` : ""}</button>`).join("")}</div>`;
-    app.querySelectorAll("[data-me]").forEach((b) => b.onclick = () => { S.me = +b.dataset.me; render(); });
+      <div class="people">${P.map((p, i) => { const taken = takenByOther(g, i); return `<button class="person" data-me="${i}" ${taken ? "disabled" : ""}>${h(p)}${taken ? `<span>${t("takenTag")}</span>` : recOf(g, w, i)?.done ? `<span>${t("doneTag")}</span>` : ""}</button>`; }).join("")}</div>`;
+    app.querySelectorAll("[data-me]").forEach((b) => b.onclick = () => {
+      const p = +b.dataset.me;
+      if (takenByOther(g, p)) return render();
+      S.me = p; setClaim(g, p, DEVICE); render(); broadcast();
+    });
     bindInvite();
     return;
   }
@@ -502,7 +576,7 @@ function bindInvite() {
 }
 
 function bindFoot() {
-  document.getElementById("not-me").onclick = () => { S.me = null; render(); };
+  document.getElementById("not-me").onclick = () => { release(); render(); };
   bindTwoTap("leave", t("leave"), leave);
 }
 

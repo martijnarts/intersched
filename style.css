@@ -124,3 +124,11 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .join { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .join .secondary { width: auto; padding: 10px 18px; font-size: 16px; }
 .lang { background: transparent; color: var(--muted); font-family: var(--font-body); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; padding: 4px 10px; border: 1.5px solid var(--line); border-radius: 999px; }
+.person:disabled { opacity: 0.5; cursor: default; }
+.stepper { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface); border: 1.5px solid var(--line); border-radius: 10px; padding: 4px; }
+.stepper span { font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+.stepper small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
+.stepper button { background: transparent; color: var(--accent); font-size: 26px; line-height: 1; width: 44px; height: 44px; }
+.stepper button:disabled { color: var(--line); cursor: default; }
+.cell.past { background: transparent; border-style: dashed; opacity: 0.45; }
+.setup { display: flex; flex-direction: column; gap: 18px; }

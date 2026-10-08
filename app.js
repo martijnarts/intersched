@@ -1,4 +1,5 @@
 import { WORDS } from "./words.js";
+import { STRINGS } from "./strings.js";
 
 // A game is a setup plus one record per (week, player): the slots that player can make,
 // and whether they are done. Both modes share it; own-phone mode merges records over gossip.
@@ -18,18 +19,27 @@ const DEVICE = (() => {
   } catch { return Math.random().toString(36).slice(2); }
 })();
 
+// ---------- language ----------
+const pickLang = () => {
+  try { const l = localStorage.getItem("intersched.lang"); if (STRINGS[l]) return l; } catch {}
+  return (navigator.languages || [navigator.language]).some((l) => /^nl\b/i.test(l)) ? "nl" : "en";
+};
+let LANG = pickLang();
+const t = (key, ...args) => { const v = STRINGS[LANG][key]; return typeof v === "function" ? v(...args) : v; };
+document.documentElement.lang = LANG;
+
 // ---------- dates ----------
 function iso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function parseIso(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
 const addDays = (s, n) => { const d = parseIso(s); d.setDate(d.getDate() + n); return d; };
 const tomorrow = () => iso(addDays(iso(new Date()), 1));
-const fmtDay = (d) => d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+const fmtDay = (d) => d.toLocaleDateString(t("locale"), { weekday: "long", day: "numeric", month: "long" });
 const fmtRange = (s, w) => {
   const o = { day: "numeric", month: "short" };
-  return `${addDays(s, 7 * w).toLocaleDateString("en-GB", o)} – ${addDays(s, 7 * w + 6).toLocaleDateString("en-GB", o)}`;
+  return `${addDays(s, 7 * w).toLocaleDateString(t("locale"), o)} – ${addDays(s, 7 * w + 6).toLocaleDateString(t("locale"), o)}`;
 };
 const h = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const list = (names) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+const list = (names) => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} ${t("and")} ${names.at(-1)}`;
 
 // ---------- game rules ----------
 const nCells = (g) => 7 * g.setup.slots.length;
@@ -76,7 +86,7 @@ const fresh = (prev) => ({
   screen: "setup",
   draft: {
     players: prev?.draft?.players?.length ? prev.draft.players : ["", "", ""],
-    slots: prev?.draft?.slots?.length ? prev.draft.slots : ["Afternoon", "Evening"],
+    slots: prev?.draft?.slots?.length ? prev.draft.slots : [...t("defaultSlots")],
     start: tomorrow(),
   },
   game: null, turn: 0, history: [], sel: null,
@@ -124,12 +134,12 @@ function gridHtml(g, w, viewer, editable, live = false) {
   let out = `<div></div>` + g.setup.slots.map((s) => `<div class="head">${h(s)}</div>`).join("");
   for (let day = 0; day < 7; day++) {
     const d = addDays(g.setup.start, 7 * w + day), wk = d.getDay() === 0 || d.getDay() === 6;
-    out += `<div class="day ${wk ? "weekend" : ""}">${d.toLocaleDateString("en-GB", { weekday: "short" })}<span>${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span></div>`;
+    out += `<div class="day ${wk ? "weekend" : ""}">${d.toLocaleDateString(t("locale"), { weekday: "short" })}<span>${d.toLocaleDateString(t("locale"), { day: "numeric", month: "short" })}</span></div>`;
     for (let s = 0; s < n; s++) {
       const idx = day * n + s, yes = mine.has(idx), x = !open.has(idx);
       const who = others.filter(([, set]) => set.has(idx)).map(([p]) => p);
       const ini = who.length ? `<span class="ini">${who.map((p) => h(tag[p])).join(" ")}</span>` : "";
-      const label = `${g.setup.slots[s]}${x ? ", someone can't" : ""}${who.length ? `, ${who.map((p) => g.setup.players[p]).join(", ")} can` : ""}`;
+      const label = `${g.setup.slots[s]}${x ? t("cellX") : ""}${who.length ? t("cellWho", list(who.map((p) => g.setup.players[p])), who.length) : ""}`;
       out += `<button class="cell ${yes ? "yes" : ""} ${x ? "x" : ""}" data-idx="${idx}" aria-pressed="${yes}" ${editable ? "" : "disabled"} aria-label="${h(label)}">${x ? "×" : yes ? "✓" : ""}${ini}</button>`;
     }
   }
@@ -157,14 +167,14 @@ function seatsHtml(g, w, current) {
 
 function rolledNotice(g, w) {
   return w > 0 && weekInfo(g, w).done.length === 0
-    ? `<div class="notice">Nothing worked for ${fmtRange(g.setup.start, w - 1)}. Same again for this week.</div>` : "";
+    ? `<div class="notice">${t("rolled", fmtRange(g.setup.start, w - 1))}</div>` : "";
 }
 
 function bindTwoTap(id, label, action) {
   const b = document.getElementById(id);
   b.onclick = () => {
     if (b.dataset.armed) return action();
-    b.dataset.armed = "1"; b.textContent = "Tap again to confirm"; b.style.color = "var(--accent)";
+    b.dataset.armed = "1"; b.textContent = t("confirm"); b.style.color = "var(--accent)";
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = label; b.style.color = ""; } }, 3000);
   };
 }
@@ -176,35 +186,35 @@ function renderSetup() {
     <div class="row">
       <span class="num">${i + 1}</span>
       <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off">
-      <button class="icon-btn" data-del="${key}" data-i="${i}" aria-label="Remove">×</button>
+      <button class="icon-btn" data-del="${key}" data-i="${i}" aria-label="${t("remove")}">×</button>
     </div>`).join("");
-  const passLabel = () => `Pass one phone · ${D.players.find((p) => p.trim()) || "player 1"} starts`;
+  const passLabel = () => t("passOne", D.players.find((p) => p.trim()) || t("playerOne"));
   app.innerHTML = `
-    <div class="brand">intersched</div>
+    <div class="brand">intersched <button class="lang" id="lang">${t("other").toUpperCase()}</button></div>
     <fieldset>
-      <span class="label">Players, in seat order</span>
-      ${listRows("players", "Name")}
-      <button class="ghost" data-add="players">+ Add player</button>
+      <span class="label">${t("players")}</span>
+      ${listRows("players", t("name"))}
+      <button class="ghost" data-add="players">${t("addPlayer")}</button>
     </fieldset>
     <fieldset>
-      <span class="label">Time slots, earliest first</span>
-      ${listRows("slots", "e.g. Evening")}
-      <button class="ghost" data-add="slots">+ Add slot</button>
+      <span class="label">${t("slots")}</span>
+      ${listRows("slots", t("slotExample"))}
+      <button class="ghost" data-add="slots">${t("addSlot")}</button>
     </fieldset>
     <fieldset>
-      <label class="label" for="start">First day</label>
+      <label class="label" for="start">${t("firstDay")}</label>
       <input id="start" type="date" value="${D.start}" min="${iso(new Date())}">
     </fieldset>
     <div class="error" id="err"></div>
     <div class="modes">
       <button class="primary" id="go-pass">${h(passLabel())}</button>
-      <button class="secondary" id="go-net">Everyone on their own phone</button>
+      <button class="secondary" id="go-net">${t("ownPhones")}</button>
     </div>
     <form class="join" id="join">
-      <label class="label" for="code">Room words from another phone</label>
+      <label class="label" for="code">${t("joinWords")}</label>
       <div class="row">
         <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false">
-        <button class="secondary" type="submit">Join</button>
+        <button class="secondary" type="submit">${t("join")}</button>
       </div>
       <div class="error" id="join-err"></div>
     </form>`;
@@ -221,15 +231,24 @@ function renderSetup() {
     const k = b.dataset.del; if (D[k].length > 1) D[k].splice(+b.dataset.i, 1); else D[k][0] = ""; render();
   });
   document.getElementById("start").onchange = (e) => { D.start = e.target.value; save(); };
+  document.getElementById("lang").onclick = () => {
+    const before = t("defaultSlots");
+    LANG = t("other");
+    try { localStorage.setItem("intersched.lang", LANG); } catch {}
+    document.documentElement.lang = LANG;
+    // Untouched default slots follow the language.
+    if (D.slots.join("|") === before.join("|")) D.slots = [...t("defaultSlots")];
+    render();
+  };
 
   const validSetup = () => {
     const players = D.players.map((p) => p.trim()).filter(Boolean);
     const slots = D.slots.map((p) => p.trim()).filter(Boolean);
     const err = document.getElementById("err");
-    if (players.length < 2) return void (err.textContent = "Add at least two players.");
-    if (new Set(players).size !== players.length) return void (err.textContent = "Give every player a different name.");
-    if (!slots.length) return void (err.textContent = "Add at least one time slot.");
-    if (!D.start) return void (err.textContent = "Pick a first day.");
+    if (players.length < 2) return void (err.textContent = t("needPlayers"));
+    if (new Set(players).size !== players.length) return void (err.textContent = t("uniqueNames"));
+    if (!slots.length) return void (err.textContent = t("needSlot"));
+    if (!D.start) return void (err.textContent = t("needDay"));
     D.players = players; D.slots = slots;
     return { setup: { players, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {} };
   };
@@ -244,7 +263,7 @@ function renderSetup() {
   document.getElementById("join").onsubmit = (e) => {
     e.preventDefault();
     const words = parseWords(document.getElementById("code").value);
-    if (!words) return void (document.getElementById("join-err").textContent = `Type the ${ROOM_WORDS} words shown on the other phone.`);
+    if (!words) return void (document.getElementById("join-err").textContent = t("badWords", ROOM_WORDS));
     openRoom(words);
   };
 }
@@ -254,7 +273,7 @@ function renderTurn() {
   const g = S.game, me = S.turn, w = currentWeek(g), P = g.setup.players;
   const info = weekInfo(g, w), left = leftAfter(g, w, me);
   const others = P.map((_, i) => i).filter((i) => i !== me && !recOf(g, w, i)?.done);
-  const btn = left === 0 ? "None of these work · next week" : others.length ? `Pass to ${P[nextTurn(g, w, me)]}` : "Done";
+  const btn = left === 0 ? t("noneWork") : others.length ? t("passTo", P[nextTurn(g, w, me)]) : t("done");
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
 
   app.innerHTML = `
@@ -262,15 +281,15 @@ function renderTurn() {
     ${rolledNotice(g, w)}
     <div class="enter">
       <div class="who">${h(P[me])}</div>
-      <div class="who-sub">Tap every slot you can make.</div>
+      <div class="who-sub">${t("tapHint")}</div>
     </div>
     ${gridHtml(g, w, me, true)}
-    <div class="count"><b>${left}</b> of ${openFor(g, w, me).size} open slots work for you${info.done.length ? " and everyone before you" : ""}</div>
+    <div class="count">${t("left", left, openFor(g, w, me).size)}${info.done.length ? t("andBefore") : ""}</div>
     ${seatsHtml(g, w, me)}
     <button class="primary" id="pass">${h(btn)}</button>
     <div class="foot">
-      <button id="undo" ${prev == null ? "disabled" : ""}>↶ Back${prev == null ? "" : ` to ${h(P[prev])}`}</button>
-      <button id="reset">Start over</button>
+      <button id="undo" ${prev == null ? "disabled" : ""}>${prev == null ? t("back") : h(t("backTo", P[prev]))}</button>
+      <button id="reset">${t("startOver")}</button>
     </div>`;
 
   bindGrid(g, w, me);
@@ -283,7 +302,7 @@ function renderTurn() {
     render(); window.scrollTo(0, 0);
   };
   document.getElementById("undo").onclick = undo;
-  bindTwoTap("reset", "Start over", () => { S = fresh(S); render(); });
+  bindTwoTap("reset", t("startOver"), () => { S = fresh(S); render(); });
 }
 
 function nextTurn(g, w, me) {
@@ -305,10 +324,10 @@ function doneHtml(g, w, foot) {
   const label = (idx) => ({ d: fmtDay(addDays(g.setup.start, 7 * w + Math.floor(idx / n))), p: g.setup.slots[idx % n] });
   const sel = label(S.sel);
   return `
-    <div class="done-head enter">${open.length === 1 ? "One slot works for everyone" : `${open.length} slots work for everyone`}</div>
+    <div class="done-head enter">${t("result", open.length)}</div>
     <div class="options">${open.map((idx) => { const l = label(idx); return `<button class="option ${idx === S.sel ? "sel" : ""}" data-opt="${idx}"><span class="d">${l.d}</span><span class="p">${h(l.p)}</span></button>`; }).join("")}</div>
     <div class="stack">
-      <button class="primary" id="copy" data-text="${h(`${sel.d}, ${sel.p.toLowerCase()}`)}">Copy ${h(sel.d.split(" ")[0])} ${h(sel.p.toLowerCase())}</button>
+      <button class="primary" id="copy" data-text="${h(`${sel.d}, ${sel.p.toLowerCase()}`)}">${h(t("copy", sel.d.split(" ")[0], sel.p.toLowerCase()))}</button>
       ${foot}
     </div>`;
 }
@@ -318,7 +337,7 @@ function bindDone() {
   const copy = document.getElementById("copy");
   copy.onclick = () => {
     const text = copy.dataset.text;
-    try { navigator.clipboard.writeText(text).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = text; }); }
+    try { navigator.clipboard.writeText(text).then(() => { copy.textContent = t("copied"); }, () => { copy.textContent = text; }); }
     catch { copy.textContent = text; }
   };
 }
@@ -326,11 +345,11 @@ function bindDone() {
 function renderDone() {
   const g = S.game, w = currentWeek(g);
   app.innerHTML = `
-    <div class="brand">intersched <small>${w ? `${w} week${w > 1 ? "s" : ""} skipped` : fmtRange(g.setup.start, w)}</small></div>
-    ${doneHtml(g, w, `<div class="foot"><button id="undo">↶ Back to ${h(g.setup.players[S.turn])}</button><button id="reset">Start over</button></div>`)}`;
+    <div class="brand">intersched <small>${w ? t("skipped", w) : fmtRange(g.setup.start, w)}</small></div>
+    ${doneHtml(g, w, `<div class="foot"><button id="undo">${h(t("backTo", g.setup.players[S.turn]))}</button><button id="reset">${t("startOver")}</button></div>`)}`;
   bindDone();
   document.getElementById("undo").onclick = undo;
-  bindTwoTap("reset", "Start over", () => { S = fresh(S); render(); });
+  bindTwoTap("reset", t("startOver"), () => { S = fresh(S); render(); });
 }
 
 // ---------- own phone ----------
@@ -389,9 +408,9 @@ function broadcast() {
 }
 
 function peersPill() {
-  if (NET.error) return `<span class="pill bad">Offline</span>`;
-  if (!NET.room) return `<span class="pill">Connecting…</span>`;
-  return `<span class="pill ${NET.peers ? "live" : ""}">${NET.peers ? `${NET.peers} other phone${NET.peers > 1 ? "s" : ""}` : "No one else yet"}</span>`;
+  if (NET.error) return `<span class="pill bad">${t("offline")}</span>`;
+  if (!NET.room) return `<span class="pill">${t("connecting")}</span>`;
+  return `<span class="pill ${NET.peers ? "live" : ""}">${NET.peers ? t("others", NET.peers) : t("alone")}</span>`;
 }
 
 function leave() { history.replaceState(null, "", location.pathname); location.reload(); }
@@ -407,11 +426,11 @@ function renderNet() {
       <div class="center">
         <div class="qr">${NET.mod.qr_svg(url)}</div>
         <div class="words" id="words">${h(NET.words.replaceAll("-", " "))}</div>
-        <button class="secondary" id="copy-link">Copy link</button>
+        <button class="secondary" id="copy-link">${t("copyLink")}</button>
       </div>
-      <button class="primary" id="close">${S.me == null ? "Pick your name" : "Back to the week"}</button>`;
+      <button class="primary" id="close">${S.me == null ? t("pickName") : t("backToWeek")}</button>`;
     document.getElementById("copy-link").onclick = (e) => {
-      try { navigator.clipboard.writeText(url).then(() => { e.target.textContent = "Copied"; }); } catch {}
+      try { navigator.clipboard.writeText(url).then(() => { e.target.textContent = t("copied"); }); } catch {}
     };
     document.getElementById("close").onclick = () => { NET.invite = false; render(); };
     return;
@@ -421,10 +440,10 @@ function renderNet() {
     app.innerHTML = `
       ${bar()}
       <div class="center">
-        <div class="done-head">${NET.error ? "Can't reach the room" : "Joining…"}</div>
-        <div class="hint">${NET.error ? h(NET.error) : "Waiting for a phone that's already in the room."}</div>
+        <div class="done-head">${NET.error ? t("unreachable") : t("joining")}</div>
+        <div class="hint">${NET.error ? h(NET.error) : t("waitingRoom")}</div>
       </div>
-      <button class="secondary" id="leave">${NET.error ? "Try again" : "Cancel"}</button>`;
+      <button class="secondary" id="leave">${NET.error ? t("retry") : t("cancel")}</button>`;
     document.getElementById("leave").onclick = NET.error ? () => location.reload() : leave;
     return;
   }
@@ -433,39 +452,39 @@ function renderNet() {
 
   if (S.me == null || S.me >= P.length) {
     app.innerHTML = `
-      ${bar(NET.room ? `<button id="invite">Invite</button>` : "")}
-      <div class="done-head">Who are you?</div>
-      <div class="people">${P.map((p, i) => `<button class="person" data-me="${i}">${h(p)}${recOf(g, w, i)?.done ? "<span>done</span>" : ""}</button>`).join("")}</div>`;
+      ${bar(NET.room ? `<button id="invite">${t("invite")}</button>` : "")}
+      <div class="done-head">${t("whoAreYou")}</div>
+      <div class="people">${P.map((p, i) => `<button class="person" data-me="${i}">${h(p)}${recOf(g, w, i)?.done ? `<span>${t("doneTag")}</span>` : ""}</button>`).join("")}</div>`;
     app.querySelectorAll("[data-me]").forEach((b) => b.onclick = () => { S.me = +b.dataset.me; render(); });
     bindInvite();
     return;
   }
 
-  const foot = `<div class="foot"><button id="not-me">Not ${h(P[S.me])}?</button><button id="leave">Leave room</button></div>`;
+  const foot = `<div class="foot"><button id="not-me">${h(t("notMe", P[S.me]))}</button><button id="leave">${t("leave")}</button></div>`;
 
   if (info.finished) {
-    app.innerHTML = `${bar(`<button id="invite">Invite</button>`)}${doneHtml(g, w, foot)}`;
+    app.innerHTML = `${bar(`<button id="invite">${t("invite")}</button>`)}${doneHtml(g, w, foot)}`;
     bindDone(); bindInvite(); bindFoot();
     return;
   }
 
   const me = S.me, done = !!recOf(g, w, me)?.done, left = leftAfter(g, w, me);
   const waiting = P.filter((_, i) => i !== me && !recOf(g, w, i)?.done);
-  const btn = left === 0 ? "None of these work · next week" : waiting.length ? "I'm done" : "Done";
+  const btn = left === 0 ? t("noneWork") : waiting.length ? t("imDone") : t("done");
 
   app.innerHTML = `
-    ${bar(`<button id="invite">Invite</button>`)}
+    ${bar(`<button id="invite">${t("invite")}</button>`)}
     ${rolledNotice(g, w)}
     <div class="me-line"><span class="label">${fmtRange(g.setup.start, w)}</span></div>
     <div class="enter">
       <div class="who">${h(P[me])}</div>
-      <div class="who-sub">${done ? "Your picks are in." : "Tap every slot you can make."}</div>
+      <div class="who-sub">${done ? t("picksIn") : t("tapHint")}</div>
     </div>
     ${gridHtml(g, w, me, !done, true)}
-    <div class="count"><b>${left}</b> of ${openFor(g, w, me).size} open slots work for you${info.done.filter((p) => p !== me).length ? " and everyone who's done" : ""}</div>
+    <div class="count">${t("left", left, openFor(g, w, me).size)}${info.done.filter((p) => p !== me).length ? t("andDone") : ""}</div>
     ${seatsHtml(g, w, me)}
     ${done
-      ? `<div class="wait">Waiting for ${h(list(waiting))}</div><button class="secondary" id="edit">Change my picks</button>`
+      ? `<div class="wait">${h(t("waitingFor", list(waiting)))}</div><button class="secondary" id="edit">${t("edit")}</button>`
       : `<button class="primary" id="submit">${h(btn)}</button>`}
     ${foot}`;
 
@@ -484,7 +503,7 @@ function bindInvite() {
 
 function bindFoot() {
   document.getElementById("not-me").onclick = () => { S.me = null; render(); };
-  bindTwoTap("leave", "Leave room", leave);
+  bindTwoTap("leave", t("leave"), leave);
 }
 
 // ---------- boot ----------

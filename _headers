@@ -1,0 +1,3 @@
+# Phones must not run an old app.js against a new pkg/ after a deploy.
+/*
+  Cache-Control: no-cache

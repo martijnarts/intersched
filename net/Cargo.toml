@@ -1,0 +1,32 @@
+[package]
+name = "intersched-net"
+version = "0.1.0"
+edition = "2024"
+license = "EUPL-1.2"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1"
+console_error_panic_hook = "0.1.7"
+data-encoding = "2"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+iroh = { version = "1.0.0", default-features = false, features = ["tls-ring"] }
+iroh-gossip = { version = "0.101", default-features = false, features = ["net"] }
+js-sys = "0.3"
+n0-future = "0.3"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+wasm-bindgen = "=0.2.127"
+wasm-bindgen-futures = "0.4"
+wasm-streams = "0.5"
+
+[profile.release]
+codegen-units = 1
+strip = "symbols"
+lto = true
+opt-level = "z"
+panic = "abort"

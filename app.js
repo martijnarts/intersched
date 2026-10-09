@@ -125,7 +125,7 @@ function save() {
 
 const app = document.getElementById("app");
 function render() {
-  try { (NET ? renderNet : { setup: renderSetup, turn: renderTurn, done: renderDone }[S.screen])(); }
+  try { (NET ? renderNet : { setup: renderSetup, join: renderJoin, turn: renderTurn, done: renderDone }[S.screen])(); }
   catch (e) { console.error(e); if (NET) throw e; S = fresh(S); renderSetup(); }
   save();
 }
@@ -210,11 +210,10 @@ function renderSetup() {
       <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off" enterkeyhint="next">
       <button type="button" class="icon-btn" data-del="${key}" data-i="${i}" tabindex="-1" aria-label="${t("remove")}">×</button>
     </div>`).join("");
-  const passLabel = () => t("passOne", D.players.find((p) => p.trim()) || t("playerOne"));
   const ahead = Math.round((parseIso(D.start) - parseIso(mondayOf(today()))) / (7 * 864e5));
   const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : "";
   app.innerHTML = `
-    <div class="brand">intersched <button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button></div>
+    <div class="brand">intersched <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
     <form class="setup" id="setup" novalidate>
       <fieldset>
         <span class="label">${t("players")}</span>
@@ -235,25 +234,12 @@ function renderSetup() {
         </div>
       </fieldset>
       <div class="error" id="err"></div>
-      <div class="modes">
-        <button type="button" class="primary" id="go-pass">${h(passLabel())}</button>
-        <button type="button" class="secondary" id="go-net">${t("ownPhones")}</button>
-      </div>
-    </form>
-    <form class="join" id="join">
-      <label class="label" for="code">${t("joinWords")}</label>
-      <div class="row">
-        <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
-        <button class="secondary" type="submit">${t("join")}</button>
-      </div>
-      <div class="error" id="join-err"></div>
+      <button type="submit" class="primary">${t("start")}</button>
     </form>`;
 
-  document.getElementById("setup").onsubmit = (e) => e.preventDefault();
   app.querySelectorAll("input[data-key]").forEach((el) => {
     el.addEventListener("input", () => {
       D[el.dataset.key][+el.dataset.i] = el.value; save();
-      if (el.dataset.key === "players") document.getElementById("go-pass").textContent = passLabel();
     });
     // Enter moves to the next row. On the last filled row it adds one.
     el.addEventListener("keydown", (e) => {
@@ -295,20 +281,38 @@ function renderSetup() {
     D.players = players; D.slots = slots;
     return { setup: { players, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {}, claims: {} };
   };
-  document.getElementById("go-pass").onclick = () => {
+  document.getElementById("setup").onsubmit = (e) => {
+    e.preventDefault();
     const g = validSetup(); if (!g) return;
     Object.assign(S, { game: g, turn: 0, history: [], sel: null, screen: "turn" }); render();
   };
-  document.getElementById("go-net").onclick = () => {
-    const g = validSetup(); if (!g) return;
-    openRoom(newWords(), g);
-  };
+  document.getElementById("to-join").onclick = () => { S.screen = "join"; render(); };
+}
+
+function renderJoin() {
+  app.innerHTML = `
+    <div class="brand">intersched <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
+    <form class="join" id="join">
+      <label class="label" for="code">${t("joinWords")}</label>
+      <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
+      <div class="error" id="join-err"></div>
+      <button class="primary" type="submit">${t("join")}</button>
+    </form>`;
+  document.getElementById("code").focus();
+  document.getElementById("cancel").onclick = () => { S.screen = "setup"; render(); };
   document.getElementById("join").onsubmit = (e) => {
     e.preventDefault();
     const words = parseWords(document.getElementById("code").value);
     if (!words) return void (document.getElementById("join-err").textContent = t("badWords", ROOM_WORDS));
+    S.screen = "setup";
     openRoom(words);
   };
+}
+
+// Sharing turns this phone's game into a room; picks so far carry over.
+function share() {
+  const g = S.game;
+  openRoom(newWords(), { setup: { ...g.setup, ts: Date.now(), by: DEVICE }, recs: g.recs, claims: {} });
 }
 
 // ---------- pass one phone ----------
@@ -320,7 +324,7 @@ function renderTurn() {
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
 
   app.innerHTML = `
-    <div class="brand">intersched <small>${fmtRange(g.setup.start, w)}</small></div>
+    <div class="brand">intersched <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
     ${rolledNotice(g, w)}
     <div class="enter">
       <div class="who">${h(P[me])}</div>
@@ -345,6 +349,7 @@ function renderTurn() {
     render(); window.scrollTo(0, 0);
   };
   document.getElementById("undo").onclick = undo;
+  document.getElementById("share").onclick = share;
   bindTwoTap("reset", t("startOver"), () => { S = fresh(S); render(); });
 }
 
@@ -521,7 +526,7 @@ function renderNet() {
   if (S.me == null || S.me >= P.length) {
     const notice = NET.notice; NET.notice = null;
     app.innerHTML = `
-      ${bar(NET.room ? `<button id="invite">${t("invite")}</button>` : "")}
+      ${bar(NET.room ? `<button id="invite">${t("share")}</button>` : "")}
       ${notice ? `<div class="notice">${h(notice)}</div>` : ""}
       <div class="done-head">${t("whoAreYou")}</div>
       <div class="people">${P.map((p, i) => { const taken = takenByOther(g, i); return `<button class="person" data-me="${i}" ${taken ? "disabled" : ""}>${h(p)}${taken ? `<span>${t("takenTag")}</span>` : recOf(g, w, i)?.done ? `<span>${t("doneTag")}</span>` : ""}</button>`; }).join("")}</div>`;
@@ -537,7 +542,7 @@ function renderNet() {
   const foot = `<div class="foot"><button id="not-me">${h(t("notMe", P[S.me]))}</button><button id="leave">${t("leave")}</button></div>`;
 
   if (info.finished) {
-    app.innerHTML = `${bar(`<button id="invite">${t("invite")}</button>`)}${doneHtml(g, w, foot)}`;
+    app.innerHTML = `${bar(`<button id="invite">${t("share")}</button>`)}${doneHtml(g, w, foot)}`;
     bindDone(); bindInvite(); bindFoot();
     return;
   }
@@ -547,7 +552,7 @@ function renderNet() {
   const btn = left === 0 ? t("noneWork") : waiting.length ? t("imDone") : t("done");
 
   app.innerHTML = `
-    ${bar(`<button id="invite">${t("invite")}</button>`)}
+    ${bar(`<button id="invite">${t("share")}</button>`)}
     ${rolledNotice(g, w)}
     <div class="me-line"><span class="label">${fmtRange(g.setup.start, w)}</span></div>
     <div class="enter">

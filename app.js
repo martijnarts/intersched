@@ -213,7 +213,7 @@ function renderSetup() {
   const ahead = Math.round((parseIso(D.start) - parseIso(mondayOf(today()))) / (7 * 864e5));
   const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : "";
   app.innerHTML = `
-    <div class="brand">intersched <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
+    <div class="brand">When Diagram <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
     <form class="setup" id="setup" novalidate>
       <fieldset>
         <span class="label">${t("players")}</span>
@@ -291,7 +291,7 @@ function renderSetup() {
 
 function renderJoin() {
   app.innerHTML = `
-    <div class="brand">intersched <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
+    <div class="brand">When Diagram <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
     <form class="join" id="join">
       <label class="label" for="code">${t("joinWords")}</label>
       <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
@@ -324,7 +324,7 @@ function renderTurn() {
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
 
   app.innerHTML = `
-    <div class="brand">intersched <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
+    <div class="brand">When Diagram <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
     ${rolledNotice(g, w)}
     <div class="enter">
       <div class="who">${h(P[me])}</div>
@@ -393,7 +393,7 @@ function bindDone() {
 function renderDone() {
   const g = S.game, w = currentWeek(g);
   app.innerHTML = `
-    <div class="brand">intersched <small>${w ? t("skipped", w) : fmtRange(g.setup.start, w)}</small></div>
+    <div class="brand">When Diagram <small>${w ? t("skipped", w) : fmtRange(g.setup.start, w)}</small></div>
     ${doneHtml(g, w, `<div class="foot"><button id="undo">${h(t("backTo", g.setup.players[S.turn]))}</button><button id="reset">${t("startOver")}</button></div>`)}`;
   bindDone();
   document.getElementById("undo").onclick = undo;
@@ -484,7 +484,7 @@ async function leave() {
 
 function renderNet() {
   const g = S.game;
-  const bar = (extra = "") => `<div class="brand">intersched <span class="bar">${extra}${peersPill()}</span></div>`;
+  const bar = (extra = "") => `<div class="brand">When Diagram <span class="bar">${extra}${peersPill()}</span></div>`;
 
   if (NET.invite && NET.room) {
     const url = inviteUrl();

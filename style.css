@@ -130,3 +130,14 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .stepper button:disabled { color: var(--line); cursor: default; }
 .cell.past { background: transparent; border-style: dashed; opacity: 0.45; }
 .setup { display: flex; flex-direction: column; gap: 18px; }
+
+/* Venn: the logo mark and the result diagram */
+.logo { display: inline-flex; align-items: center; gap: 8px; }
+.logo svg { width: 26px; height: 16px; flex: none; }
+.logo circle { fill: var(--accent); fill-opacity: 0.25; stroke: var(--accent); stroke-width: 1.5; }
+.venn { display: block; width: min(100%, 320px); height: auto; margin-inline: auto; }
+.venn .v-set { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); stroke-opacity: 0.55; stroke-width: 1.5; }
+.venn text { text-anchor: middle; dominant-baseline: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+.venn .v-name { fill: var(--muted); font: 700 13px var(--font-body); }
+.venn .v-day { fill: var(--ink); font: 800 17px var(--font-display); }
+.venn .v-slot { fill: var(--accent); font: 700 13px var(--font-body); }

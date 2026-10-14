@@ -131,6 +131,8 @@ function render() {
 }
 
 // ---------- shared pieces ----------
+const LOGO = `<span class="logo"><svg viewBox="0 0 26 16" aria-hidden="true"><circle cx="8" cy="8" r="7"/><circle cx="18" cy="8" r="7"/></svg>When Diagram</span>`;
+
 // The shortest name prefix that tells each player apart, so Ann and Alex show as An and Al.
 function tags(players) {
   return players.map((p) => {
@@ -213,7 +215,7 @@ function renderSetup() {
   const ahead = Math.round((parseIso(D.start) - parseIso(mondayOf(today()))) / (7 * 864e5));
   const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : "";
   app.innerHTML = `
-    <div class="brand">When Diagram <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
+    <div class="brand">${LOGO} <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
     <form class="setup" id="setup" novalidate>
       <fieldset>
         <span class="label">${t("players")}</span>
@@ -291,7 +293,7 @@ function renderSetup() {
 
 function renderJoin() {
   app.innerHTML = `
-    <div class="brand">When Diagram <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
+    <div class="brand">${LOGO} <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
     <form class="join" id="join">
       <label class="label" for="code">${t("joinWords")}</label>
       <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
@@ -324,7 +326,7 @@ function renderTurn() {
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
 
   app.innerHTML = `
-    <div class="brand">When Diagram <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
+    <div class="brand">${LOGO} <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
     ${rolledNotice(g, w)}
     <div class="enter">
       <div class="who">${h(P[me])}</div>
@@ -366,13 +368,37 @@ function undo() {
 }
 
 // ---------- result ----------
+// One circle per player, all overlapping in the middle, where the chosen slot sits.
+// Each circle is translucent, so the more circles overlap, the darker the area.
+function vennHtml(players, day, slot) {
+  const n = players.length, c = 150, R = 92, r = n === 2 ? 44 : 52;
+  // Two players sit side by side, first seat on the left; more go round from the top.
+  const dirs = players.map((_, i) => {
+    const a = (n === 2 ? Math.PI : -Math.PI / 2) + (2 * Math.PI * i) / n;
+    return [Math.cos(a), Math.sin(a)];
+  });
+  const xs = dirs.map(([x]) => c + r * x), ys = dirs.map(([, y]) => c + r * y), pad = 2;
+  const box = [Math.min(...xs) - R - pad, Math.min(...ys) - R - pad];
+  const size = [Math.max(...xs) + R + pad - box[0], Math.max(...ys) + R + pad - box[1]];
+  const short = (p) => (p.length > 9 ? `${p.slice(0, 8)}…` : p);
+  const sets = dirs.map(([x, y]) => `<circle class="v-set" cx="${c + r * x}" cy="${c + r * y}" r="${R}"/>`).join("");
+  const names = dirs.map(([x, y], i) => `<text class="v-name" x="${c + (r + R * 0.6) * x}" y="${c + (r + R * 0.6) * y}">${h(short(players[i]))}</text>`).join("");
+  return `<svg class="venn" viewBox="${box.map((v) => v.toFixed(1)).join(" ")} ${size.map((v) => v.toFixed(1)).join(" ")}" role="img" aria-label="${h(`${list(players)}: ${day}, ${slot}`)}">
+    ${sets}${names}
+    <text class="v-day" x="${c}" y="${c - 3}">${h(day)}</text>
+    <text class="v-slot" x="${c}" y="${c + 16}">${h(slot)}</text>
+  </svg>`;
+}
+
 function doneHtml(g, w, foot) {
   const n = g.setup.slots.length, open = [...weekInfo(g, w).common].sort((a, b) => a - b);
   if (S.sel == null || !open.includes(S.sel)) S.sel = open[0];
   const label = (idx) => ({ d: fmtDay(addDays(g.setup.start, 7 * w + Math.floor(idx / n))), p: g.setup.slots[idx % n] });
   const sel = label(S.sel);
+  const selDay = addDays(g.setup.start, 7 * w + Math.floor(S.sel / n)).toLocaleDateString(t("locale"), { weekday: "short", day: "numeric", month: "short" });
   return `
     <div class="done-head enter">${t("result", open.length)}</div>
+    ${vennHtml(g.setup.players, selDay, sel.p)}
     <div class="options">${open.map((idx) => { const l = label(idx); return `<button class="option ${idx === S.sel ? "sel" : ""}" data-opt="${idx}"><span class="d">${l.d}</span><span class="p">${h(l.p)}</span></button>`; }).join("")}</div>
     <div class="stack">
       <button class="primary" id="copy" data-text="${h(`${sel.d}, ${sel.p.toLowerCase()}`)}">${h(t("copy", sel.d.split(" ")[0], sel.p.toLowerCase()))}</button>
@@ -393,7 +419,7 @@ function bindDone() {
 function renderDone() {
   const g = S.game, w = currentWeek(g);
   app.innerHTML = `
-    <div class="brand">When Diagram <small>${w ? t("skipped", w) : fmtRange(g.setup.start, w)}</small></div>
+    <div class="brand">${LOGO} <small>${w ? t("skipped", w) : fmtRange(g.setup.start, w)}</small></div>
     ${doneHtml(g, w, `<div class="foot"><button id="undo">${h(t("backTo", g.setup.players[S.turn]))}</button><button id="reset">${t("startOver")}</button></div>`)}`;
   bindDone();
   document.getElementById("undo").onclick = undo;
@@ -484,7 +510,7 @@ async function leave() {
 
 function renderNet() {
   const g = S.game;
-  const bar = (extra = "") => `<div class="brand">When Diagram <span class="bar">${extra}${peersPill()}</span></div>`;
+  const bar = (extra = "") => `<div class="brand">${LOGO} <span class="bar">${extra}${peersPill()}</span></div>`;
 
   if (NET.invite && NET.room) {
     const url = inviteUrl();

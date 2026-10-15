@@ -18,7 +18,7 @@ iroh-dns = { version = "1.3", default-features = false }
 iroh-gossip = { version = "0.101", default-features = false, features = ["net"] }
 js-sys = "0.3"
 n0-future = "0.3"
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+qrcode = { version = "0.14", default-features = false }
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"

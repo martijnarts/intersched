@@ -262,17 +262,11 @@ async fn rendezvous(
     }
 }
 
-/// An SVG QR code for `text`. Phone cameras read black on white with a quiet zone most reliably,
-/// so it keeps those colours in dark mode too.
+/// The QR modules for `text`, row by row, 1 for dark. The page draws them itself.
 #[wasm_bindgen]
-pub fn qr_svg(text: &str) -> Result<String, JsError> {
+pub fn qr_modules(text: &str) -> Result<Vec<u8>, JsError> {
     let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::M).map_err(js_err)?;
-    Ok(code
-        .render::<qrcode::render::svg::Color>()
-        .quiet_zone(true)
-        .dark_color(qrcode::render::svg::Color("#000000"))
-        .light_color(qrcode::render::svg::Color("#ffffff"))
-        .build())
+    Ok(code.to_colors().into_iter().map(|c| u8::from(c == qrcode::Color::Dark)).collect())
 }
 
 fn js_err(err: impl std::fmt::Display) -> JsError {

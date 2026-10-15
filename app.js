@@ -333,7 +333,7 @@ function renderSetup() {
         <span class="label">${t("week")}</span>
         <div class="stepper">
           <button type="button" id="wk-prev" aria-label="${t("earlier")}" ${ahead <= 0 ? "disabled" : ""}>‹</button>
-          <span class="wk ${stepDir}">${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span>${stepDir ? `<span class="wk-old ${stepDir}" aria-hidden="true">${stepOld}</span>` : ""}
+          <div class="wk-track"><span class="wk ${stepDir}">${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span>${stepDir ? `<span class="wk-old ${stepDir}" aria-hidden="true">${stepOld}</span>` : ""}</div>
           <button type="button" id="wk-next" aria-label="${t("later")}">›</button>
         </div>
       </fieldset>
@@ -366,6 +366,8 @@ function renderSetup() {
     const drop = () => { if (D[k].length > 1) D[k].splice(i, 1); else D[k][0] = ""; render(); };
     if (calm.matches || D[k].length <= 1 || row.classList.contains("leaving")) return drop();
     row.classList.add("leaving");
+    // The next row's × slides under the finger, so all of them wait until this one is gone.
+    app.querySelectorAll("[data-del]").forEach((x) => { x.disabled = true; });
     row.addEventListener("animationend", drop, { once: true });
   });
   const step = (days, dir) => () => {
@@ -483,8 +485,10 @@ function undo() {
 // The result replays the session: each person's set lands in the order they finished, the
 // count in the middle drops to what still works for everyone, and the last landing opens the
 // shared lens with the answer in it.
-const GAP = 300, LAND = 650, HOLD = 160;
-const landAt = (base, n) => base + (n - 1) * GAP + LAND + HOLD;
+const LAND = 480, HOLD = 220;
+// Small groups land one set after another; bigger ones overlap so the whole replay stays under two seconds.
+const gapFor = (n) => (n <= 4 ? LAND : Math.round(1500 / (n - 1)));
+const landAt = (base, n) => base + (n - 1) * gapFor(n) + LAND + HOLD;
 
 function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base }) {
   const n = people.length, c = 150, R = 92, r = n === 2 ? 44 : 52;
@@ -498,7 +502,7 @@ function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base })
   const size = [Math.max(...xs) + R + pad - box[0], Math.max(...ys) + R + pad - box[1]];
   const max = n > 6 ? 6 : 9, short = (p) => (p.length > max ? `${p.slice(0, max - 1)}…` : p);
   const rank = people.map((_, i) => order.indexOf(i));
-  const land = landAt(base, n);
+  const land = landAt(base, n), GAP = gapFor(n);
   // Each set flies in from outside along its own direction, in finishing order.
   const at = (i) => `--i:${rank[i]};--dx:${(dirs[i][0] * 70).toFixed(1)}px;--dy:${(dirs[i][1] * 70).toFixed(1)}px`;
   const circle = (cls, i) => `<circle class="${cls} s${i % INKS}" style="${at(i)}" cx="${xs[i]}" cy="${ys[i]}" r="${R}"/>`;
@@ -511,18 +515,18 @@ function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base })
   const names = people.map((p, i) => `<text class="v-name ${ink(i)}" style="--i:${rank[i]}" x="${c + (r + R * 0.6) * dirs[i][0]}" y="${c + (r + R * 0.6) * dirs[i][1]}">${h(short(p))}</text>`).join("");
   // On the last landing, dots in everyone's inks burst out of the lens.
   const bits = fresh ? Array.from({ length: 12 }, (_, k) => {
-    const a = (k / 12) * 2 * Math.PI + 0.26, d = 150 + ((k * 23) % 40);
+    const a = (k / 12) * 2 * Math.PI + 0.26, d = 130 + ((k * 23) % 35);
     return `<circle class="v-bit s${(k % n) % INKS}" cx="${c}" cy="${c}" r="${6 + (k % 3) * 1.5}" style="--k:${k};--tx:${(Math.cos(a) * d).toFixed(1)}px;--ty:${(Math.sin(a) * d).toFixed(1)}px"/>`;
   }).join("") : "";
   // Only counts that changed get a step, so the middle never re-pops the same number.
   const steps = counts.map((v, k) => [v, k]).filter(([v], j) => j === 0 || v !== counts[j - 1]);
-  return `<svg class="venn ${fresh}" style="--b:${base}ms;--gap:${GAP}ms;--land:${land}ms" viewBox="${box.map((v) => v.toFixed(1)).join(" ")} ${size.map((v) => v.toFixed(1)).join(" ")}" role="img" aria-label="${h(`${list(people)}: ${day}, ${slot}`)}">
+  return `<svg class="venn ${fresh} ${n > 4 ? "crowd" : ""}" style="--b:${base}ms;--gap:${GAP}ms;--land:${land}ms;--crowd:${Math.min(1, 4 / n).toFixed(2)}" viewBox="${box.map((v) => v.toFixed(1)).join(" ")} ${size.map((v) => v.toFixed(1)).join(" ")}" role="img" aria-label="${h(`${list(people)}: ${day}, ${slot}`)}">
     <defs>${clips}</defs>
     ${fills}<g class="v-lens-g" style="transform-origin:${c}px ${c}px">${lens}</g>${lines}
     ${bits}${names}
     ${fresh ? steps.map(([v, k], j) => {
       // Each count shows from its landing until the next change, the last until the lens opens.
-      const t0 = base + k * GAP + LAND - 120, t1 = j < steps.length - 1 ? base + steps[j + 1][1] * GAP + LAND - 120 : land;
+      const t0 = base + k * GAP + LAND - 60, t1 = j < steps.length - 1 ? base + steps[j + 1][1] * GAP + LAND - 60 : land;
       return `<text class="v-count" style="--t0:${t0}ms;--dur:${t1 - t0}ms" x="${c}" y="${c}">${v}</text>`;
     }).join("") : ""}
     <g class="v-label ${freshLabel}"><text class="v-day" x="${c}" y="${c - 3}">${h(day)}</text>

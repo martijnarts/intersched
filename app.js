@@ -102,6 +102,7 @@ const fresh = (prev) => ({
   screen: "setup",
   draft: {
     people: prev?.draft?.people?.length ? prev.draft.people : ["", "", ""],
+    inks: prev?.draft?.people?.length ? prev.draft.inks : [0, 1, 2],
     slots: prev?.draft?.slots?.length ? prev.draft.slots : [...t("defaultSlots")],
     start: mondayOf(today()),
   },
@@ -178,6 +179,7 @@ function ring(kind) {
 const settle = () => (document.documentElement.classList.contains("vt") ? 450 : 0);
 
 function draw() {
+  curInks = !NET && (S.screen === "setup" || S.screen === "join") ? S.draft.inks : S.game?.setup?.inks || null;
   try { (NET ? renderNet : { setup: renderSetup, join: renderJoin, turn: renderTurn, done: renderDone }[S.screen])(); }
   catch (e) { console.error(e); if (NET) throw e; S = fresh(S); renderSetup(); }
   save();
@@ -202,7 +204,10 @@ const lastEnter = {};
 const enterOnce = (part, key) => (lastEnter[part] === key ? "" : ((lastEnter[part] = key), "enter"));
 // Everyone keeps one ink from setup to result, so a colour always means that person's set.
 const INKS = 10;
-const ink = (i) => `p${i % INKS}`;
+// Inks belong to people, not to rows: removing Ben leaves Cy her own colour and typeface.
+let curInks = null;
+const inkNum = (i) => (curInks?.[i] ?? i) % INKS;
+const ink = (i) => `p${inkNum(i)}`;
 // Slots seen open before, per week and viewer, so a slot that just dropped out gets stamped.
 const seenOpen = new Map();
 // The count shown last, per view, so it ticks only when it changes on the same screen.
@@ -250,9 +255,9 @@ function gridHtml(g, w, viewer, editable, live = false) {
       }
       const yes = mine.has(idx), x = !open.has(idx), out_ = x && (!before || before.has(idx));
       const who = others.filter(([, set]) => set.has(idx)).map(([p]) => p);
-      const ini = who.length ? `<span class="ini">${who.map((p) => h(tag[p])).join(" ")}</span>` : "";
+      const ini = who.length ? `<span class="ini">${who.map((p) => `<b class="${ink(p)}">${h(tag[p])}</b>`).join(" ")}</span>` : "";
       const label = `${g.setup.slots[s]}${x ? t("cellX") : ""}${who.length ? t("cellWho", list(who.map((p) => g.setup.people[p])), who.length) : ""}`;
-      out += `<button class="cell ${yes ? "yes" : ""} ${x ? "x" : ""} ${out_ ? "out" : ""} ${idx === justTapped ? "pop" : ""}" style="${out_ ? `--s:${stamps++};` : ""}${idx === justTapped && tapAt ? `--px:${tapAt[0]}%;--py:${tapAt[1]}%` : ""}" data-idx="${idx}" aria-pressed="${yes}" ${editable ? "" : "disabled"} aria-label="${h(label)}">${x ? "×" : yes ? "✓" : ""}${ini}</button>`;
+      out += `<button class="cell ${yes ? "yes" : ""} ${x ? "x" : ""} ${out_ ? "out" : ""} ${idx === justTapped ? "pop" : ""}" style="${out_ ? `--s:${stamps++};` : ""}${idx === justTapped && tapAt ? `--px:${tapAt[0]}%;--py:${tapAt[1]}%` : ""}" data-idx="${idx}" aria-pressed="${yes}" ${editable ? "" : "disabled"} aria-label="${h(label)}">${x ? "×" : yes ? `<span class="tick">✓</span>` : ""}${ini}</button>`;
     }
   }
   return `<div class="week ${ink(viewer)}" style="grid-template-columns: 4.2em repeat(${n}, minmax(0, 1fr)); --b:${settle()}ms">${out}</div>`;
@@ -305,40 +310,72 @@ function bindTwoTap(id, label, action) {
 }
 
 // ---------- setup ----------
+// Where every movable part of the form sits before a row comes or goes. Rows after a removed one
+// are filed under the index they will have afterwards, so each one finds itself again.
+function flipTops(list, removed) {
+  const tops = new Map();
+  app.querySelectorAll("[data-flip]").forEach((el) => {
+    let key = el.dataset.flip;
+    const m = key.match(/^(people|slots)-(\d+)$/);
+    if (m && m[1] === list && removed >= 0) {
+      if (+m[2] === removed) return;
+      if (+m[2] > removed) key = `${list}-${+m[2] - 1}`;
+    }
+    tops.set(key, el.getBoundingClientRect().top);
+  });
+  return tops;
+}
+
+// Slides each part from where it was to where it is now.
+function flipPlay(tops) {
+  if (calm.matches) return;
+  app.querySelectorAll("[data-flip]").forEach((el) => {
+    const before = tops.get(el.dataset.flip);
+    const dy = before == null ? 0 : before - el.getBoundingClientRect().top;
+    if (Math.abs(dy) > 0.5) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 380, easing: "cubic-bezier(0.2, 1.25, 0.4, 1)" });
+  });
+}
+
+// A new person gets the first ink nobody in the list has.
+const freeInk = (inks) => { for (let k = 0; k < INKS; k++) if (!inks.includes(k)) return k; return inks.length % INKS; };
+
 function renderSetup() {
   const D = S.draft;
+  if (!Array.isArray(D.inks) || D.inks.length !== D.people.length) D.inks = D.people.map((_, i) => D.inks?.[i] ?? i);
+  curInks = D.inks;
+  const pushRow = (k) => { D[k].push(""); if (k === "people") D.inks.push(freeInk(D.inks)); };
   // The × buttons stay out of the tab order, so Tab and the keyboard's next key go name to name.
   const listRows = (key, ph) => D[key].map((v, i) => `
-    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}">
+    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}" data-flip="${key}-${i}">
       <span class="num">${i + 1}</span>
       <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off" enterkeyhint="next">
       <button type="button" class="icon-btn" data-del="${key}" data-i="${i}" tabindex="-1" aria-label="${t("remove")}">×</button>
     </div>`).join("");
   const ahead = Math.round((parseIso(D.start) - parseIso(mondayOf(today()))) / (7 * 864e5));
-  const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : "";
+  const tag = ahead === 0 ? t("thisWeek") : ahead === 1 ? t("nextWeek") : t("inWeeks", ahead);
   app.innerHTML = `
     <div class="brand">${logo()} <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
     <form class="setup" id="setup" novalidate>
       <fieldset>
         <span class="label">${t("people")}</span>
         ${listRows("people", t("name"))}
-        <button type="button" class="ghost" data-add="people">${t("addPerson")}</button>
+        <button type="button" class="ghost" data-add="people" data-flip="add-people">${t("addPerson")}</button>
       </fieldset>
       <fieldset>
-        <span class="label">${t("slots")}</span>
+        <span class="label" data-flip="label-slots">${t("slots")}</span>
         ${listRows("slots", t("slotExample"))}
-        <button type="button" class="ghost" data-add="slots">${t("addSlot")}</button>
+        <button type="button" class="ghost" data-add="slots" data-flip="add-slots">${t("addSlot")}</button>
       </fieldset>
       <fieldset>
-        <span class="label">${t("week")}</span>
-        <div class="stepper">
+        <span class="label" data-flip="label-week">${t("week")}</span>
+        <div class="stepper" data-flip="week">
           <button type="button" id="wk-prev" aria-label="${t("earlier")}" ${ahead <= 0 ? "disabled" : ""}>‹</button>
           <div class="wk-track"><span class="wk ${stepDir}">${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span>${stepDir ? `<span class="wk-old ${stepDir}" aria-hidden="true">${stepOld}</span>` : ""}</div>
           <button type="button" id="wk-next" aria-label="${t("later")}">›</button>
         </div>
       </fieldset>
       <div class="error" id="err"></div>
-      <button type="submit" class="primary">${t("start")}</button>
+      <button type="submit" class="primary" data-flip="start">${t("start")}</button>
     </form>`;
 
   app.querySelectorAll("input[data-key]").forEach((el) => {
@@ -351,24 +388,30 @@ function renderSetup() {
       e.preventDefault();
       const k = el.dataset.key, i = +el.dataset.i;
       if (i < D[k].length - 1) return document.getElementById(`${k}-${i + 1}`).focus();
-      if (el.value.trim()) { D[k].push(""); newRow = `${k}-${i + 1}`; render(); newRow = null; return document.getElementById(`${k}-${i + 1}`).focus(); }
+      if (el.value.trim()) { pushRow(k); newRow = `${k}-${i + 1}`; render(); newRow = null; return document.getElementById(`${k}-${i + 1}`).focus(); }
       if (k === "people") return document.getElementById("slots-0").focus();
       el.blur();
     });
   });
-  app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
-    const k = b.dataset.add; D[k].push(""); newRow = `${k}-${D[k].length - 1}`; render(); newRow = null;
-    document.getElementById(`${k}-${D[k].length - 1}`).focus();
-  });
-  // Removing a row shrinks it away first, the way adding one drops it in.
+  // Removing a row: the name squeezes back into its circle, the circle pops like a set leaving
+  // the diagram, and everything below slides up into the gap.
   app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
     const k = b.dataset.del, i = +b.dataset.i, row = b.closest(".row");
-    const drop = () => { if (D[k].length > 1) D[k].splice(i, 1); else D[k][0] = ""; render(); };
-    if (calm.matches || D[k].length <= 1 || row.classList.contains("leaving")) return drop();
-    row.classList.add("leaving");
-    // The next row's × slides under the finger, so all of them wait until this one is gone.
+    const drop = () => {
+      const tops = flipTops(k, i);
+      if (D[k].length > 1) { D[k].splice(i, 1); if (k === "people") D.inks.splice(i, 1); } else D[k][0] = "";
+      render(); flipPlay(tops);
+    };
+    if (calm.matches || D[k].length <= 1) return drop();
+    // The next row's × would slide under the finger, so they all wait until this row is gone.
     app.querySelectorAll("[data-del]").forEach((x) => { x.disabled = true; });
-    row.addEventListener("animationend", drop, { once: true });
+    row.classList.add("leaving");
+    row.querySelector(".num").addEventListener("animationend", drop, { once: true });
+  });
+  app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
+    const k = b.dataset.add, tops = flipTops(k, -1);
+    pushRow(k); newRow = `${k}-${D[k].length - 1}`; render(); newRow = null; flipPlay(tops);
+    document.getElementById(`${k}-${D[k].length - 1}`).focus();
   });
   const step = (days, dir) => () => {
     stepOld = app.querySelector(".stepper .wk").innerHTML;
@@ -387,14 +430,15 @@ function renderSetup() {
   };
 
   const validSetup = () => {
-    const people = D.people.map((p) => p.trim()).filter(Boolean);
+    const kept = D.people.map((p, i) => [p.trim(), D.inks[i]]).filter(([p]) => p);
+    const people = kept.map(([p]) => p), inks = kept.map(([, k]) => k);
     const slots = D.slots.map((p) => p.trim()).filter(Boolean);
     const err = document.getElementById("err");
     if (people.length < 2) return fail(err, t("needPeople"));
     if (new Set(people).size !== people.length) return fail(err, t("uniqueNames"));
     if (!slots.length) return fail(err, t("needSlot"));
-    D.people = people; D.slots = slots;
-    return { setup: { people, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {}, claims: {} };
+    D.people = people; D.inks = inks; D.slots = slots;
+    return { setup: { people, inks, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {}, claims: {} };
   };
   document.getElementById("setup").onsubmit = (e) => {
     e.preventDefault();
@@ -409,7 +453,7 @@ function renderJoin() {
     <div class="brand">${logo()} <span class="bar"><button type="button" id="cancel">${t("cancel")}</button></span></div>
     <form class="join" id="join">
       <label class="label" for="code">${t("joinWords")}</label>
-      <input id="code" placeholder="otter maple cove lid" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
+      <input id="code" placeholder="${h(roomWords([817, 650, 230, 702]).join(" "))}" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="go">
       <div class="error" id="join-err"></div>
       <button class="primary" type="submit">${t("join")}</button>
     </form>`;
@@ -417,17 +461,17 @@ function renderJoin() {
   document.getElementById("cancel").onclick = () => { goBack = true; S.screen = "setup"; render(); };
   document.getElementById("join").onsubmit = (e) => {
     e.preventDefault();
-    const words = parseWords(document.getElementById("code").value);
-    if (!words) return fail(document.getElementById("join-err"), t("badWords", ROOM_WORDS));
+    const ids = parseWords(document.getElementById("code").value);
+    if (!ids) return fail(document.getElementById("join-err"), t("badWords", ROOM_WORDS));
     S.screen = "setup";
-    openRoom(words);
+    openRoom(ids);
   };
 }
 
 // Sharing turns this phone's game into a room; picks so far carry over.
 function share() {
   const g = S.game;
-  openRoom(newWords(), { setup: { ...g.setup, ts: Date.now(), by: DEVICE }, recs: g.recs, claims: {} });
+  openRoom(newRoom(), { setup: { ...g.setup, ts: Date.now(), by: DEVICE }, recs: g.recs, claims: {} });
 }
 
 // ---------- pass one phone ----------
@@ -505,7 +549,7 @@ function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base })
   const land = landAt(base, n), GAP = gapFor(n);
   // Each set flies in from outside along its own direction, in finishing order.
   const at = (i) => `--i:${rank[i]};--dx:${(dirs[i][0] * 70).toFixed(1)}px;--dy:${(dirs[i][1] * 70).toFixed(1)}px`;
-  const circle = (cls, i) => `<circle class="${cls} s${i % INKS}" style="${at(i)}" cx="${xs[i]}" cy="${ys[i]}" r="${R}"/>`;
+  const circle = (cls, i) => `<circle class="${cls} s${inkNum(i)}" style="${at(i)}" cx="${xs[i]}" cy="${ys[i]}" r="${R}"/>`;
   const fills = people.map((_, i) => circle("v-set", i)).join("");
   const lines = people.map((_, i) => circle("v-line", i)).join("");
   // The lens is the true intersection: a paper fill clipped by every circle in turn.
@@ -516,7 +560,7 @@ function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base })
   // On the last landing, dots in everyone's inks burst out of the lens.
   const bits = fresh ? Array.from({ length: 12 }, (_, k) => {
     const a = (k / 12) * 2 * Math.PI + 0.26, d = 130 + ((k * 23) % 35);
-    return `<circle class="v-bit s${(k % n) % INKS}" cx="${c}" cy="${c}" r="${6 + (k % 3) * 1.5}" style="--k:${k};--tx:${(Math.cos(a) * d).toFixed(1)}px;--ty:${(Math.sin(a) * d).toFixed(1)}px"/>`;
+    return `<circle class="v-bit s${inkNum(k % n)}" cx="${c}" cy="${c}" r="${6 + (k % 3) * 1.5}" style="--k:${k};--tx:${(Math.cos(a) * d).toFixed(1)}px;--ty:${(Math.sin(a) * d).toFixed(1)}px"/>`;
   }).join("") : "";
   // Only counts that changed get a step, so the middle never re-pops the same number.
   const steps = counts.map((v, k) => [v, k]).filter(([v], j) => j === 0 || v !== counts[j - 1]);
@@ -584,25 +628,36 @@ function renderDone() {
 // ---------- own phone ----------
 // A room is four words; the words alone are enough to find it.
 const ROOM_WORDS = 4;
-const newWords = () => Array.from(crypto.getRandomValues(new Uint32Array(ROOM_WORDS)), (n) => WORDS[n % WORDS.length]).join("-");
+// A room is four positions in the word lists; each device shows them in its own language.
+const newRoom = () => Array.from(crypto.getRandomValues(new Uint32Array(ROOM_WORDS)), (n) => n % WORDS.en.length);
 const parseWords = (text) => {
-  const words = (text.toLowerCase().match(/[a-z]+/g) || []);
-  return words.length === ROOM_WORDS && words.every((w) => WORDS.includes(w)) ? words.join("-") : null;
+  const words = text.toLowerCase().match(/[a-z]+/g) || [];
+  if (words.length !== ROOM_WORDS) return null;
+  for (const list of Object.values(WORDS)) {
+    const ids = words.map((w) => list.indexOf(w));
+    if (ids.every((i) => i >= 0)) return ids;
+  }
+  return null;
 };
-const inviteUrl = () => `${location.origin}${location.pathname}#${NET.words}`;
+const roomWords = (ids) => ids.map((i) => WORDS[LANG][i]);
+const inviteUrl = () => `${location.origin}${location.pathname}#${roomWords(NET.ids).join("-")}`;
 
-async function openRoom(words, hostGame) {
-  const saved = store.get(roomKey(words));
-  NET = { key: words, words, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame, seen: {}, notice: null };
+async function openRoom(ids, hostGame) {
+  const key = ids.join(".");
+  const saved = store.get(roomKey(key));
+  NET = { key, ids, room: null, mod: null, peers: 0, error: null, secret: saved?.secret || "", invite: !!hostGame, seen: {}, notice: null };
   S.game = hostGame || saved?.game || { setup: null, recs: {} };
   S.me = saved?.me ?? null;
   S.sel = saved?.sel ?? null;
-  history.replaceState(null, "", `#${words}`);
+  history.replaceState(null, "", `#${roomWords(ids).join("-")}`);
   render();
   try {
     NET.mod = await import("./pkg/intersched_net.js");
     await NET.mod.default();
-    NET.room = await NET.mod.Room.open(words, NET.secret);
+    NET.room = await Promise.race([
+      NET.mod.Room.open(`room:${key}`, NET.secret),
+      new Promise((_, no) => setTimeout(() => no(new Error(t("unreachable"))), 25000)),
+    ]);
     NET.secret = NET.room.secret();
     pump(NET.room.events());
     broadcast();
@@ -638,7 +693,7 @@ function broadcast() {
 }
 
 function peersPill() {
-  if (NET.error) return `<span class="pill bad">${t("offline")}</span>`;
+  if (NET.error) return `<button class="pill bad" id="retry" onclick="location.reload()">${t("offline")} ↻</button>`;
   if (!NET.room) return `<span class="pill">${t("connecting")}</span>`;
   return `<span class="pill ${NET.peers ? "live" : ""}">${NET.peers ? t("others", NET.peers) : t("alone")}</span>`;
 }
@@ -687,9 +742,9 @@ function renderNet() {
     const url = inviteUrl();
     app.innerHTML = `
       ${bar()}
-      <div class="center ${enterOnce("qr", NET.words)}">
+      <div class="center ${enterOnce("qr", NET.key)}">
         <div class="qr">${qrHtml(url)}</div>
-        <div class="words" id="words">${h(NET.words.replaceAll("-", " "))}</div>
+        <div class="words" id="words">${h(roomWords(NET.ids).join(" "))}</div>
         <button class="secondary" id="copy-link">${t("copyLink")}</button>
       </div>
       <button class="primary" id="close">${S.me == null ? t("pickName") : t("backToWeek")}</button>`;

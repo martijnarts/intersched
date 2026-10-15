@@ -26,7 +26,7 @@ use js_sys::{Object, Reflect};
 use n0_future::{
     StreamExt,
     task::{self, AbortOnDropHandle},
-    time::{Duration, Instant, sleep},
+    time::{Duration, Instant, sleep, timeout},
 };
 use wasm_bindgen::prelude::*;
 use wasm_streams::ReadableStream;
@@ -83,7 +83,8 @@ impl Room {
         let lookup = MemoryLookup::new();
         endpoint.address_lookup().map_err(js_err)?.add(lookup.clone());
         // Our record entry must carry a relay URL, so wait until we have one.
-        endpoint.online().await;
+        // A slow relay must not hang the room: carry on, and the relay connects in the background.
+        timeout(Duration::from_secs(8), endpoint.online()).await.ok();
         let my_relay = endpoint.addr().relay_urls().next().cloned();
 
         let gossip = Gossip::builder()
@@ -93,7 +94,7 @@ impl Room {
 
         let record = Record { client: PkarrRelayClient::new(PKARR_RELAY.parse().unwrap()), key: record_key };
         let me = secret.public();
-        let mut known = record.read().await;
+        let mut known = timeout(Duration::from_secs(6), record.read()).await.unwrap_or_default();
         known.remove(&me);
         seed(&lookup, &known);
         let (sender, receiver) = gossip
@@ -229,7 +230,7 @@ async fn rendezvous(
     loop {
         let alone = neighbors.lock().unwrap().is_empty();
         if alone && written.is_some() {
-            let mut fresh = record.read().await;
+            let mut fresh = timeout(Duration::from_secs(6), record.read()).await.unwrap_or_default();
             fresh.remove(&me.0);
             seed(&lookup, &fresh);
             let ids: Vec<_> = fresh.keys().copied().collect();

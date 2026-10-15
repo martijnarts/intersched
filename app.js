@@ -153,26 +153,26 @@ function render() {
   lastView = key; lastWeek = week; goBack = false;
   if (!changed || !document.startViewTransition || calm.matches) return draw();
   const root = document.documentElement;
-  // The circle grows exactly to the farthest corner, so the whole duration is visible.
-  const r = Math.hypot(Math.max(tapX, innerWidth - tapX), Math.max(tapY, innerHeight - tapY)) + 8;
+  // Only the tap point comes from here; CSS works out the radius to the farthest corner.
   root.style.setProperty("--vt-x", `${tapX}px`);
   root.style.setProperty("--vt-y", `${tapY}px`);
-  root.style.setProperty("--vt-r", `${r}px`);
   root.dataset.vt = kind;
   root.classList.add("vt");
-  const vt = document.startViewTransition(() => { draw(); if (kind !== "roll") ring(kind); });
+  // The ink ring (html::before in CSS) is switched on inside the update, so only the new screen has it.
+  const vt = document.startViewTransition(() => { draw(); if (kind !== "roll") root.dataset.ring = kind; });
   vt.finished.finally(() => {
     root.classList.remove("vt");
     delete root.dataset.vt;
-    document.querySelectorAll(".vt-ring").forEach((el) => el.remove());
+    delete root.dataset.ring;
   });
 }
 
-// An ink ring rides the edge of the circle, so a half-revealed screen reads as a circle, not a glitch.
-function ring(kind) {
-  const el = document.createElement("div");
-  el.className = `vt-ring ${kind}`;
-  document.body.append(el);
+// Runs a small in-place change as a view transition of the given kind; CSS animates the named parts.
+function morph(kind, update) {
+  if (!document.startViewTransition || calm.matches) return update();
+  const root = document.documentElement;
+  root.dataset.vt = kind;
+  document.startViewTransition(update).finished.finally(() => { delete root.dataset.vt; });
 }
 
 // Animations on a new screen wait for the screen change to finish growing in.
@@ -214,10 +214,8 @@ const seenOpen = new Map();
 let lastCount = null;
 // The cell tapped last, so only that one plays its fill.
 let justTapped = null, tapAt = null;
-// The week label shown before a step, so it can slide out while the new one slides in.
-let stepOld = "";
-// The row just added, and the way the week stepper moved, for their one-off animations.
-let newRow = null, stepDir = "";
+// The row just added, for its drop-in animation.
+let newRow = null;
 // People already shown as done, so only a newly finished one pops.
 const seenDone = new Set();
 // The logo circles slide together once per page load.
@@ -310,32 +308,6 @@ function bindTwoTap(id, label, action) {
 }
 
 // ---------- setup ----------
-// Where every movable part of the form sits before a row comes or goes. Rows after a removed one
-// are filed under the index they will have afterwards, so each one finds itself again.
-function flipTops(list, removed) {
-  const tops = new Map();
-  app.querySelectorAll("[data-flip]").forEach((el) => {
-    let key = el.dataset.flip;
-    const m = key.match(/^(people|slots)-(\d+)$/);
-    if (m && m[1] === list && removed >= 0) {
-      if (+m[2] === removed) return;
-      if (+m[2] > removed) key = `${list}-${+m[2] - 1}`;
-    }
-    tops.set(key, el.getBoundingClientRect().top);
-  });
-  return tops;
-}
-
-// Slides each part from where it was to where it is now.
-function flipPlay(tops) {
-  if (calm.matches) return;
-  app.querySelectorAll("[data-flip]").forEach((el) => {
-    const before = tops.get(el.dataset.flip);
-    const dy = before == null ? 0 : before - el.getBoundingClientRect().top;
-    if (Math.abs(dy) > 0.5) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 380, easing: "cubic-bezier(0.2, 1.25, 0.4, 1)" });
-  });
-}
-
 // A new person gets the first ink nobody in the list has.
 const freeInk = (inks) => { for (let k = 0; k < INKS; k++) if (!inks.includes(k)) return k; return inks.length % INKS; };
 
@@ -343,10 +315,18 @@ function renderSetup() {
   const D = S.draft;
   if (!Array.isArray(D.inks) || D.inks.length !== D.people.length) D.inks = D.people.map((_, i) => D.inks?.[i] ?? i);
   curInks = D.inks;
-  const pushRow = (k) => { D[k].push(""); if (k === "people") D.inks.push(freeInk(D.inks)); };
+  // Slots get a stable id too, so a slot row keeps its name when one above it goes.
+  if (!Array.isArray(D.slotIds) || D.slotIds.length !== D.slots.length) D.slotIds = D.slots.map((_, i) => i);
+  const pushRow = (k) => {
+    D[k].push("");
+    if (k === "people") D.inks.push(freeInk(D.inks));
+    else D.slotIds.push(Math.max(-1, ...D.slotIds) + 1);
+  };
+  // Each movable part of the form has a stable view-transition name, by person or slot, not by row.
+  const vtName = (key, i) => (key === "people" ? `person-${D.inks[i]}` : `slot-${D.slotIds[i]}`);
   // The × buttons stay out of the tab order, so Tab and the keyboard's next key go name to name.
   const listRows = (key, ph) => D[key].map((v, i) => `
-    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}" data-flip="${key}-${i}">
+    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}" data-flip style="--vtn:${vtName(key, i)}">
       <span class="num">${i + 1}</span>
       <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off" enterkeyhint="next">
       <button type="button" class="icon-btn" data-del="${key}" data-i="${i}" tabindex="-1" aria-label="${t("remove")}">×</button>
@@ -359,23 +339,23 @@ function renderSetup() {
       <fieldset>
         <span class="label">${t("people")}</span>
         ${listRows("people", t("name"))}
-        <button type="button" class="ghost" data-add="people" data-flip="add-people">${t("addPerson")}</button>
+        <button type="button" class="ghost" data-add="people" data-flip style="--vtn:add-people">${t("addPerson")}</button>
       </fieldset>
       <fieldset>
-        <span class="label" data-flip="label-slots">${t("slots")}</span>
+        <span class="label" data-flip style="--vtn:label-slots">${t("slots")}</span>
         ${listRows("slots", t("slotExample"))}
-        <button type="button" class="ghost" data-add="slots" data-flip="add-slots">${t("addSlot")}</button>
+        <button type="button" class="ghost" data-add="slots" data-flip style="--vtn:add-slots">${t("addSlot")}</button>
       </fieldset>
       <fieldset>
-        <span class="label" data-flip="label-week">${t("week")}</span>
-        <div class="stepper" data-flip="week">
+        <span class="label" data-flip style="--vtn:label-week">${t("week")}</span>
+        <div class="stepper" data-flip style="--vtn:week">
           <button type="button" id="wk-prev" aria-label="${t("earlier")}" ${ahead <= 0 ? "disabled" : ""}>‹</button>
-          <div class="wk-track"><span class="wk ${stepDir}">${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span>${stepDir ? `<span class="wk-old ${stepDir}" aria-hidden="true">${stepOld}</span>` : ""}</div>
+          <div class="wk-track"><span class="wk">${fmtRange(D.start, 0)}${tag ? ` <small>${tag}</small>` : ""}</span></div>
           <button type="button" id="wk-next" aria-label="${t("later")}">›</button>
         </div>
       </fieldset>
       <div class="error" id="err"></div>
-      <button type="submit" class="primary" data-flip="start">${t("start")}</button>
+      <button type="submit" class="primary" data-flip style="--vtn:start">${t("start")}</button>
     </form>`;
 
   app.querySelectorAll("input[data-key]").forEach((el) => {
@@ -388,7 +368,7 @@ function renderSetup() {
       e.preventDefault();
       const k = el.dataset.key, i = +el.dataset.i;
       if (i < D[k].length - 1) return document.getElementById(`${k}-${i + 1}`).focus();
-      if (el.value.trim()) { pushRow(k); newRow = `${k}-${i + 1}`; render(); newRow = null; return document.getElementById(`${k}-${i + 1}`).focus(); }
+      if (el.value.trim()) return morph("flow", () => { pushRow(k); newRow = `${k}-${i + 1}`; render(); newRow = null; document.getElementById(`${k}-${i + 1}`).focus(); });
       if (k === "people") return document.getElementById("slots-0").focus();
       el.blur();
     });
@@ -397,11 +377,10 @@ function renderSetup() {
   // the diagram, and everything below slides up into the gap.
   app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
     const k = b.dataset.del, i = +b.dataset.i, row = b.closest(".row");
-    const drop = () => {
-      const tops = flipTops(k, i);
-      if (D[k].length > 1) { D[k].splice(i, 1); if (k === "people") D.inks.splice(i, 1); } else D[k][0] = "";
-      render(); flipPlay(tops);
-    };
+    const drop = () => morph("flow", () => {
+      if (D[k].length > 1) { D[k].splice(i, 1); (k === "people" ? D.inks : D.slotIds).splice(i, 1); } else D[k][0] = "";
+      render();
+    });
     if (calm.matches || D[k].length <= 1) return drop();
     // The next row's × would slide under the finger, so they all wait until this row is gone.
     app.querySelectorAll("[data-del]").forEach((x) => { x.disabled = true; });
@@ -409,16 +388,15 @@ function renderSetup() {
     row.querySelector(".num").addEventListener("animationend", drop, { once: true });
   });
   app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
-    const k = b.dataset.add, tops = flipTops(k, -1);
-    pushRow(k); newRow = `${k}-${D[k].length - 1}`; render(); newRow = null; flipPlay(tops);
-    document.getElementById(`${k}-${D[k].length - 1}`).focus();
+    const k = b.dataset.add;
+    morph("flow", () => {
+      pushRow(k); newRow = `${k}-${D[k].length - 1}`; render(); newRow = null;
+      document.getElementById(`${k}-${D[k].length - 1}`).focus();
+    });
   });
-  const step = (days, dir) => () => {
-    stepOld = app.querySelector(".stepper .wk").innerHTML;
-    D.start = iso(addDays(D.start, days)); stepDir = dir; render(); stepDir = "";
-  };
-  document.getElementById("wk-prev").onclick = step(-7, "from-left");
-  document.getElementById("wk-next").onclick = step(7, "from-right");
+  const step = (days, dir) => () => morph(dir, () => { D.start = iso(addDays(D.start, days)); render(); });
+  document.getElementById("wk-prev").onclick = step(-7, "step-back");
+  document.getElementById("wk-next").onclick = step(7, "step-on");
   document.getElementById("lang").onclick = () => {
     const before = t("defaultSlots");
     LANG = t("other");
@@ -432,12 +410,13 @@ function renderSetup() {
   const validSetup = () => {
     const kept = D.people.map((p, i) => [p.trim(), D.inks[i]]).filter(([p]) => p);
     const people = kept.map(([p]) => p), inks = kept.map(([, k]) => k);
-    const slots = D.slots.map((p) => p.trim()).filter(Boolean);
+    const keptSlots = D.slots.map((p, i) => [p.trim(), D.slotIds[i]]).filter(([p]) => p);
+    const slots = keptSlots.map(([p]) => p), slotIds = keptSlots.map(([, id]) => id);
     const err = document.getElementById("err");
     if (people.length < 2) return fail(err, t("needPeople"));
     if (new Set(people).size !== people.length) return fail(err, t("uniqueNames"));
     if (!slots.length) return fail(err, t("needSlot"));
-    D.people = people; D.inks = inks; D.slots = slots;
+    D.people = people; D.inks = inks; D.slots = slots; D.slotIds = slotIds;
     return { setup: { people, inks, slots, start: D.start, ts: Date.now(), by: DEVICE }, recs: {}, claims: {} };
   };
   document.getElementById("setup").onsubmit = (e) => {
@@ -545,29 +524,26 @@ function vennHtml(people, day, slot, { fresh, freshLabel, order, counts, base })
   const box = [Math.min(...xs) - R - pad, Math.min(...ys) - R - pad];
   const size = [Math.max(...xs) + R + pad - box[0], Math.max(...ys) + R + pad - box[1]];
   const max = n > 6 ? 6 : 9, short = (p) => (p.length > max ? `${p.slice(0, max - 1)}…` : p);
-  const rank = people.map((_, i) => order.indexOf(i));
   const land = landAt(base, n), GAP = gapFor(n);
-  // Each set flies in from outside along its own direction, in finishing order.
-  const at = (i) => `--i:${rank[i]};--dx:${(dirs[i][0] * 70).toFixed(1)}px;--dy:${(dirs[i][1] * 70).toFixed(1)}px`;
-  const circle = (cls, i) => `<circle class="${cls} s${inkNum(i)}" style="${at(i)}" cx="${xs[i]}" cy="${ys[i]}" r="${R}"/>`;
-  const fills = people.map((_, i) => circle("v-set", i)).join("");
-  const lines = people.map((_, i) => circle("v-line", i)).join("");
+  // Sets are drawn in finishing order, so CSS staggers them by sibling-index(); the blend does not
+  // care about order. Each flies in along its own angle, which CSS turns into a direction.
+  const angle = (i) => ((n === 2 ? 180 : -90) + (360 * i) / n).toFixed(2);
+  const circle = (cls, i) => `<circle class="${cls} s${inkNum(i)}" style="--a:${angle(i)}deg" cx="${xs[i]}" cy="${ys[i]}" r="${R}"/>`;
+  const fills = order.map((i) => circle("v-set", i)).join("");
+  const lines = order.map((i) => circle("v-line", i)).join("");
   // The lens is the true intersection: a paper fill clipped by every circle in turn.
   const clips = people.map((_, i) => `<clipPath id="vc${i}"><circle cx="${xs[i]}" cy="${ys[i]}" r="${R}"/></clipPath>`).join("");
   const lens = people.reduceRight((inner, _, i) => `<g clip-path="url(#vc${i})">${inner}</g>`,
     `<rect class="v-lens" x="${box[0]}" y="${box[1]}" width="${size[0]}" height="${size[1]}"/>`);
-  const names = people.map((p, i) => `<text class="v-name ${ink(i)}" style="--i:${rank[i]}" x="${c + (r + R * 0.6) * dirs[i][0]}" y="${c + (r + R * 0.6) * dirs[i][1]}">${h(short(p))}</text>`).join("");
-  // On the last landing, dots in everyone's inks burst out of the lens.
-  const bits = fresh ? Array.from({ length: 12 }, (_, k) => {
-    const a = (k / 12) * 2 * Math.PI + 0.26, d = 130 + ((k * 23) % 35);
-    return `<circle class="v-bit s${inkNum(k % n)}" cx="${c}" cy="${c}" r="${6 + (k % 3) * 1.5}" style="--k:${k};--tx:${(Math.cos(a) * d).toFixed(1)}px;--ty:${(Math.sin(a) * d).toFixed(1)}px"/>`;
-  }).join("") : "";
+  const names = order.map((i) => `<text class="v-name ${ink(i)}" x="${c + (r + R * 0.6) * dirs[i][0]}" y="${c + (r + R * 0.6) * dirs[i][1]}">${h(short(people[i]))}</text>`).join("");
+  // On the last landing, dots in everyone's inks burst out of the lens; CSS aims each one.
+  const bits = fresh ? Array.from({ length: 12 }, (_, k) => `<circle class="v-bit s${inkNum(k % n)}" cx="${c}" cy="${c}" r="${6 + (k % 3) * 1.5}"/>`).join("") : "";
   // Only counts that changed get a step, so the middle never re-pops the same number.
   const steps = counts.map((v, k) => [v, k]).filter(([v], j) => j === 0 || v !== counts[j - 1]);
   return `<svg class="venn ${fresh} ${n > 4 ? "crowd" : ""}" style="--b:${base}ms;--gap:${GAP}ms;--land:${land}ms;--crowd:${Math.min(1, 4 / n).toFixed(2)}" viewBox="${box.map((v) => v.toFixed(1)).join(" ")} ${size.map((v) => v.toFixed(1)).join(" ")}" role="img" aria-label="${h(`${list(people)}: ${day}, ${slot}`)}">
     <defs>${clips}</defs>
-    ${fills}<g class="v-lens-g" style="transform-origin:${c}px ${c}px">${lens}</g>${lines}
-    ${bits}${names}
+    <g class="v-sets">${fills}</g><g class="v-lens-g" style="transform-origin:${c}px ${c}px">${lens}</g><g class="v-lines">${lines}</g>
+    <g class="v-bits">${bits}</g><g class="v-names">${names}</g>
     ${fresh ? steps.map(([v, k], j) => {
       // Each count shows from its landing until the next change, the last until the lens opens.
       const t0 = base + k * GAP + LAND - 60, t1 = j < steps.length - 1 ? base + steps[j + 1][1] * GAP + LAND - 60 : land;
@@ -594,11 +570,11 @@ function doneHtml(g, w, foot) {
     return still.size;
   });
   const base = settle(), land = landAt(base, order.length);
-  const words = t("result", open.length).split(" ").map((x, i) => `<span class="w" style="--i:${i}">${x}</span>`).join(" ");
+  const words = t("result", open.length).split(" ").map((x) => `<span class="w">${x}</span>`).join(" ");
   return `
     <div class="done-head ${enterOnce("head", `done ${w}`)}" style="--b:${land}ms">${words}</div>
     ${vennHtml(g.setup.people, selDay, sel.p, { fresh, freshLabel, order, counts, base })}
-    <div class="options ${fresh}" style="--land:${land}ms">${open.map((idx, i) => { const l = label(idx); return `<button class="option ${idx === S.sel ? "sel" : ""} ${idx === S.sel && freshLabel && !fresh ? "pop" : ""}" style="--i:${i}" data-opt="${idx}"><span class="d">${l.d}</span><span class="p">${h(l.p)}</span></button>`; }).join("")}</div>
+    <div class="options ${fresh}" style="--land:${land}ms">${open.map((idx, i) => { const l = label(idx); return `<button class="option ${idx === S.sel ? "sel" : ""} ${idx === S.sel && freshLabel && !fresh ? "pop" : ""}" data-opt="${idx}"><span class="d">${l.d}</span><span class="p">${h(l.p)}</span></button>`; }).join("")}</div>
     <div class="stack ${fresh}" style="--land:${land}ms">
       <button class="primary" id="copy" data-text="${h(`${sel.d}, ${sel.p.toLowerCase()}`)}">${h(t("copy", sel.d.split(" ")[0], sel.p.toLowerCase()))}</button>
       ${foot}
@@ -722,10 +698,10 @@ function qrHtml(text) {
     if (!bits[y * n + x] || inEye(x, y)) continue;
     dots += `<circle class="qr-dot" style="--d:${Math.hypot(x - mid, y - mid).toFixed(1)}" cx="${x + q + 0.5}" cy="${y + q + 0.5}" r="0.47"/>`;
   }
-  const eyes = [[0, 0], [n - 7, 0], [0, n - 7]].map(([x, y], i) => `<g class="qr-eye e${i}" style="--e:${i}">
+  const eyes = [[0, 0], [n - 7, 0], [0, n - 7]].map(([x, y], i) => `<g class="qr-eye e${i}">
     <rect class="qr-ring" x="${x + q + 0.5}" y="${y + q + 0.5}" width="6" height="6" rx="2.2"/>
     <rect class="qr-pupil" x="${x + q + 2}" y="${y + q + 2}" width="3" height="3" rx="1.1"/></g>`).join("");
-  return `<svg class="qr-code" viewBox="0 0 ${n + 2 * q} ${n + 2 * q}" role="img" aria-label="${h(text)}">${dots}${eyes}</svg>`;
+  return `<svg class="qr-code" viewBox="0 0 ${n + 2 * q} ${n + 2 * q}" role="img" aria-label="${h(text)}">${dots}<g class="qr-eyes">${eyes}</g></svg>`;
 }
 
 async function leave() {

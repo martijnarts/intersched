@@ -28,6 +28,8 @@
   --lens: #ffffff;
   --lens-ink: #16141d;
   --rule: 3px;
+  /* The screen-change circle reaches exactly the farthest corner from the tap. */
+  --vt-r: calc(hypot(max(var(--vt-x, 50vw), 100vw - var(--vt-x, 50vw)), max(var(--vt-y, 50vh), 100vh - var(--vt-y, 50vh))) + 8px);
   --font-display: "Unbounded", "Avenir Next", system-ui, sans-serif;
   --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
 }
@@ -299,12 +301,21 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   @keyframes vanish { to { transform: scale(0.4); opacity: 0; } }
   .row.leaving .num { animation: num-pop 340ms cubic-bezier(0.3, 1.6, 0.5, 1) 150ms forwards; }
   @keyframes num-pop { 45% { transform: scale(1.4); } 100% { transform: scale(0); opacity: 0; } }
-  /* Weeks slide all the way: the old one leaves on one side as the new one arrives on the other. */
-  .stepper .wk-old { position: absolute; left: 50%; top: 50%; translate: -50% -50%; text-align: center; pointer-events: none; font-family: var(--font-display); font-weight: 700; font-size: 15px; white-space: nowrap; }
-  .stepper .wk.from-right { animation: wk-in-right 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
-  .stepper .wk.from-left { animation: wk-in-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
-  .stepper .wk-old.from-right { animation: wk-out-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
-  .stepper .wk-old.from-left { animation: wk-out-right 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
+  /* Weeks slide all the way: a view transition keeps the old label, and both slide inside the track. */
+  html[data-vt^="step"] .stepper .wk-track { view-transition-name: week-track; }
+  html[data-vt^="step"]::view-transition-old(root), html[data-vt^="step"]::view-transition-new(root) { animation: none; }
+  ::view-transition-group(week-track) { overflow: clip; animation-duration: 460ms; }
+  ::view-transition-old(week-track), ::view-transition-new(week-track) { mix-blend-mode: normal; height: 100%; }
+  html[data-vt="step-on"]::view-transition-new(week-track) { animation: wk-in-right 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
+  html[data-vt="step-on"]::view-transition-old(week-track) { animation: wk-out-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
+  html[data-vt="step-back"]::view-transition-new(week-track) { animation: wk-in-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
+  html[data-vt="step-back"]::view-transition-old(week-track) { animation: wk-out-right 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
+  /* Rows coming and going: every named part slides from its old place to its new one. */
+  html[data-vt="flow"] [data-flip] { view-transition-name: var(--vtn); }
+  html[data-vt="flow"]::view-transition-old(root), html[data-vt="flow"]::view-transition-new(root) { animation: none; }
+  html[data-vt="flow"]::view-transition-group(*) { animation-duration: 380ms; animation-timing-function: cubic-bezier(0.2, 1.25, 0.4, 1); }
+  html[data-vt="flow"]::view-transition-old(*), html[data-vt="flow"]::view-transition-new(*) { animation: none; mix-blend-mode: normal; }
+  html[data-vt="flow"]::view-transition-old(*):not(:only-child) { opacity: 0; }
   @keyframes wk-in-right { from { transform: translateX(260px); } }
   @keyframes wk-in-left { from { transform: translateX(-260px); } }
   @keyframes wk-out-left { to { transform: translateX(-260px); } }
@@ -338,8 +349,8 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
     from { clip-path: circle(0 at var(--vt-x) var(--vt-y)); }
     to { clip-path: circle(var(--vt-r) at var(--vt-x) var(--vt-y)); }
   }
-  .vt-ring {
-    position: fixed; z-index: 50; left: var(--vt-x); top: var(--vt-y); width: 0; height: 0;
+  html[data-ring]::before {
+    content: ""; position: fixed; z-index: 50; left: var(--vt-x); top: var(--vt-y); width: 0; height: 0;
     transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; box-sizing: border-box;
     border: var(--rule) solid var(--line); box-shadow: inset 0 0 0 4px var(--pink);
     animation: ring-grow 700ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
@@ -352,7 +363,7 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
     from { clip-path: circle(var(--vt-r) at var(--vt-x) var(--vt-y)); }
     to { clip-path: circle(0 at var(--vt-x) var(--vt-y)); }
   }
-  .vt-ring.back { width: calc(var(--vt-r) * 2); height: calc(var(--vt-r) * 2); animation: ring-shrink 560ms cubic-bezier(0.5, 0, 0.3, 1) forwards; }
+  html[data-ring="back"]::before { width: calc(var(--vt-r) * 2); height: calc(var(--vt-r) * 2); animation: ring-shrink 560ms cubic-bezier(0.5, 0, 0.3, 1) forwards; }
   @keyframes ring-shrink { 80% { opacity: 1; } to { width: 0; height: 0; opacity: 0; } }
   /* A week with nothing left slides away, and the next week slides in. */
   html[data-vt="roll"]::view-transition-old(root) { animation: roll-out 650ms cubic-bezier(0.6, 0, 0.3, 1) both; }
@@ -371,16 +382,19 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 
   /* ---- the result, heaviest: a replay of the session ---- */
   .done-head.enter { animation: none; }
-  .done-head.enter .w { display: inline-block; animation: word-up 620ms cubic-bezier(0.2, 1.5, 0.4, 1) both; animation-delay: calc(var(--b, 0ms) + var(--i) * 80ms); }
+  .done-head.enter .w { display: inline-block; animation: word-up 620ms cubic-bezier(0.2, 1.5, 0.4, 1) both; animation-delay: calc(var(--b, 0ms) + (sibling-index() - 1) * 80ms); }
   @keyframes word-up { from { transform: translateY(26px) rotate(-6deg) scale(0.8); opacity: 0; text-shadow: 4px 3px 0 var(--yellow); } }
   .venn .v-set, .venn .v-line, .venn .v-label, .venn .v-bit, .venn .v-count { transform-box: fill-box; transform-origin: center; }
+  /* Each set's flight direction comes from its angle; its turn comes from where it sits in finishing order. */
+  .venn .v-set, .venn .v-line { --dx: calc(cos(var(--a)) * 70px); --dy: calc(sin(var(--a)) * 70px); --turn: calc(sibling-index() - 1); }
+  .venn .v-name { --turn: calc(sibling-index() - 1); }
   /* Each set lands in finishing order; outlines stay solid while the ink fades in. */
-  .venn.enter .v-set { animation: land-fill 650ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; animation-delay: calc(var(--b) + var(--i) * var(--gap)); }
-  .venn.enter .v-line { animation: land-line 650ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; animation-delay: calc(var(--b) + var(--i) * var(--gap)); }
+  .venn.enter .v-set { animation: land-fill 650ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; animation-delay: calc(var(--b) + var(--turn) * var(--gap)); }
+  .venn.enter .v-line { animation: land-line 650ms cubic-bezier(0.2, 0.9, 0.3, 1.15) both; animation-delay: calc(var(--b) + var(--turn) * var(--gap)); }
   @keyframes land-fill { from { transform: translate(var(--dx), var(--dy)) scale(0.5); fill-opacity: 0; } }
   .venn.enter .v-set, .venn.enter .v-line { animation-duration: 480ms; }
   @keyframes land-line { from { transform: translate(var(--dx), var(--dy)) scale(0.5); opacity: 0; } 30% { opacity: 1; } }
-  .venn.enter .v-name { animation: fade 400ms ease-out both; animation-delay: calc(var(--b) + var(--i) * var(--gap) + 500ms); }
+  .venn.enter .v-name { animation: fade 400ms ease-out both; animation-delay: calc(var(--b) + var(--turn) * var(--gap) + 500ms); }
   @keyframes fade { from { opacity: 0; } }
   /* The middle counts down what still works after each landing. */
   .venn.enter .v-count { animation: count-step var(--dur) linear var(--t0) both; }
@@ -392,20 +406,21 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   .venn.enter .v-label.enter { animation: answer 620ms cubic-bezier(0.3, 1.7, 0.5, 1) calc(var(--land) + 160ms) both; }
   @keyframes answer { 0% { transform: scale(0.3) rotate(-8deg); opacity: 0; } 60% { transform: scale(1.22) rotate(2deg); opacity: 1; } }
   @keyframes pop { from { transform: scale(0.6); opacity: 0; } }
-  .venn .v-bit { stroke: var(--line); stroke-width: 3; vector-effect: non-scaling-stroke; animation: burst 700ms cubic-bezier(0.1, 0.8, 0.3, 1) both; animation-delay: calc(var(--land) + 300ms + var(--k) * 10ms); }
+  /* Twelve dots fan out at 30° apart, each a little farther than the last, all worked out here. */
+  .venn .v-bit { --k: calc(sibling-index() - 1); --ang: calc(var(--k) * 30deg + 14.9deg); --dist: calc(130px + mod(var(--k) * 23, 35) * 1px); --tx: calc(cos(var(--ang)) * var(--dist)); --ty: calc(sin(var(--ang)) * var(--dist)); stroke: var(--line); stroke-width: 3; vector-effect: non-scaling-stroke; animation: burst 700ms cubic-bezier(0.1, 0.8, 0.3, 1) both; animation-delay: calc(var(--land) + 300ms + var(--k) * 10ms); }
   @keyframes burst {
     0% { transform: translate(0, 0) scale(0.2); opacity: 0; }
     1% { opacity: 1; }
     70% { opacity: 1; }
     100% { transform: translate(var(--tx), var(--ty)) scale(1); opacity: 0; }
   }
-  .options.enter .option { animation: enter 480ms cubic-bezier(0.2, 1.3, 0.4, 1) both; animation-delay: calc(var(--land) + 300ms + var(--i) * 80ms); }
+  .options.enter .option { animation: enter 480ms cubic-bezier(0.2, 1.3, 0.4, 1) both; animation-delay: calc(var(--land) + 300ms + (sibling-index() - 1) * 80ms); }
   .stack.enter .primary { animation: enter 480ms cubic-bezier(0.2, 1.3, 0.4, 1) both; animation-delay: calc(var(--land) + 450ms); }
   .stack.enter .foot { animation: fade 400ms ease-out both; animation-delay: calc(var(--land) + 550ms); }
 
   /* ---- the invite: the eyes spin in, then the dots ripple out from the middle ---- */
   .qr-dot, .qr-eye { transform-box: fill-box; transform-origin: center; }
-  .center.enter .qr-eye, .qr-code.wave .qr-eye { animation: eye-in 620ms cubic-bezier(0.3, 1.5, 0.5, 1) both; animation-delay: calc(200ms + var(--e) * 110ms); }
+  .center.enter .qr-eye, .qr-code.wave .qr-eye { animation: eye-in 620ms cubic-bezier(0.3, 1.5, 0.5, 1) both; animation-delay: calc(200ms + (sibling-index() - 1) * 110ms); }
   @keyframes eye-in { from { transform: scale(0) rotate(-120deg); } }
   .center.enter .qr-dot, .qr-code.wave .qr-dot { animation: dot-in 460ms cubic-bezier(0.3, 1.8, 0.5, 1) both; animation-delay: calc(350ms + var(--d) * 26ms); }
   @keyframes dot-in { from { transform: scale(0); } 60% { transform: scale(1.5); } }

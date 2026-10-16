@@ -75,7 +75,7 @@ body::after { top: -170px; right: -290px; }
 .app {
   /* Every screen is exactly the visible screen: header on top, action at the bottom, and one
      part in between that gives or takes the space. The page itself never scrolls. */
-  max-width: 480px; margin: 0 auto; height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: hidden;
+  max-width: 480px; margin: 0 auto; height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: clip;
   padding-inline: 16px; padding-block: 20px 28px;
   display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;
 }
@@ -348,13 +348,6 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   html[data-vt="step-on"]::view-transition-old(week-track) { animation: wk-out-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
   html[data-vt="step-back"]::view-transition-new(week-track) { animation: wk-in-left 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
   html[data-vt="step-back"]::view-transition-old(week-track) { animation: wk-out-right 460ms cubic-bezier(0.3, 0, 0.15, 1) both; }
-  /* Rows coming and going: every named part slides from its old place to its new one. */
-  html[data-vt="flow"] [data-flip] { view-transition-name: var(--vtn); }
-  html[data-vt="flow"]::view-transition-old(root), html[data-vt="flow"]::view-transition-new(root) { animation: none; }
-  html[data-vt="flow"]::view-transition-group(*) { animation-duration: 380ms; animation-timing-function: cubic-bezier(0.2, 1.25, 0.4, 1); }
-  html[data-vt="flow"]::view-transition-old(*), html[data-vt="flow"]::view-transition-new(*) { animation: none; mix-blend-mode: normal; }
-  /* Only the new picture moves; a removed row has already popped away, so no old picture is needed. */
-  html[data-vt="flow"]::view-transition-old(*) { opacity: 0; }
   @keyframes wk-in-right { from { transform: translateX(260px); } }
   @keyframes wk-in-left { from { transform: translateX(-260px); } }
   @keyframes wk-out-left { to { transform: translateX(-260px); } }

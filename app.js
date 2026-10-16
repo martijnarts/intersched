@@ -131,6 +131,18 @@ const calm = matchMedia("(prefers-reduced-motion: reduce)");
 // A new screen grows in as a circle from where you tapped, like one more set joining the diagram.
 let lastView = null, tapX = innerWidth / 2, tapY = innerHeight / 2;
 addEventListener("pointerdown", (e) => { tapX = e.clientX; tapY = e.clientY; }, true);
+// The on-screen keyboard: size the screen to what is actually visible (iOS overlays the keyboard
+// instead of resizing the page), and glide the field being typed in back into view.
+const vv = window.visualViewport;
+function fitViewport() {
+  if (!vv) return;
+  document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+  const field = document.activeElement;
+  if (field?.matches("input")) requestAnimationFrame(() => field.scrollIntoView({ block: "nearest", behavior: calm.matches ? "auto" : "smooth" }));
+}
+vv?.addEventListener("resize", fitViewport);
+fitViewport();
+
 // iOS only applies :active, the pressed state, when the page listens for touches.
 addEventListener("touchstart", () => {}, { passive: true });
 function viewKey() {
@@ -164,6 +176,22 @@ function render() {
     root.classList.remove("vt");
     delete root.dataset.vt;
     delete root.dataset.ring;
+  });
+}
+
+// Rows coming, going and moving slide from where they were to where they are (FLIP). This one is
+// script on purpose: view-transition pictures float above the scroll area and ignore its clipping
+// and fade, and clipping them to a container (nested groups) is Chrome-only. el.animate() moves the
+// real rows, so the list keeps its edges. Each part is matched by its stable --vtn name.
+function flow(update) {
+  const name = (el) => el.style.getPropertyValue("--vtn");
+  const tops = new Map([...app.querySelectorAll("[data-flip]")].map((el) => [name(el), el.getBoundingClientRect().top]));
+  update();
+  if (calm.matches) return;
+  app.querySelectorAll("[data-flip]").forEach((el) => {
+    const before = tops.get(name(el));
+    const dy = before == null ? 0 : before - el.getBoundingClientRect().top;
+    if (Math.abs(dy) > 0.5) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 380, easing: "cubic-bezier(0.2, 1.25, 0.4, 1)" });
   });
 }
 
@@ -390,7 +418,7 @@ function renderSetup() {
       e.preventDefault();
       const k = el.dataset.key, i = +el.dataset.i;
       if (i < D[k].length - 1) return document.getElementById(`${k}-${i + 1}`).focus();
-      if (el.value.trim()) return morph("flow", () => { pushRow(k); newRow = `${k}-${i + 1}`; render(); newRow = null; document.getElementById(`${k}-${i + 1}`).focus(); });
+      if (el.value.trim()) return flow(() => { pushRow(k); newRow = `${k}-${i + 1}`; render(); newRow = null; document.getElementById(`${k}-${i + 1}`).focus(); });
       if (k === "people") return document.getElementById("slots-0").focus();
       el.blur();
     });
@@ -399,7 +427,7 @@ function renderSetup() {
   // the diagram, and everything below slides up into the gap.
   app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => {
     const k = b.dataset.del, i = +b.dataset.i, row = b.closest(".row");
-    const drop = () => morph("flow", () => {
+    const drop = () => flow(() => {
       if (D[k].length > 1) { D[k].splice(i, 1); (k === "people" ? D.inks : D.slotIds).splice(i, 1); } else D[k][0] = "";
       render();
     });
@@ -411,13 +439,13 @@ function renderSetup() {
   });
   app.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
     const k = b.dataset.add;
-    morph("flow", () => {
+    flow(() => {
       pushRow(k); newRow = `${k}-${D[k].length - 1}`; render(); newRow = null;
       document.getElementById(`${k}-${D[k].length - 1}`).focus();
     });
   });
   // Moves a row, with its ink or slot id, and lets the flow transition settle everything into place.
-  const moveRow = (k, from, to, keepFocus = false) => morph("flow", () => {
+  const moveRow = (k, from, to, keepFocus = false) => flow(() => {
     if (from !== to) {
       const ids = k === "people" ? D.inks : D.slotIds;
       D[k].splice(to, 0, D[k].splice(from, 1)[0]);

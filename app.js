@@ -281,8 +281,14 @@ function chipsHtml(g, w, current) {
   return `<div class="chips">${g.setup.people.map((p, i) => {
     const done = !!recOf(g, w, i)?.done, key = `${w}:${i}`, fresh = done && !seenDone.has(key);
     if (done) seenDone.add(key); else seenDone.delete(key);
-    return `<span class="chip ${ink(i)} ${done ? "ok" : i === current ? "now" : ""} ${fresh ? "pop" : ""}">${h(p)}</span>`;
+    return `<span class="chip ${ink(i)} ${done ? "ok" : i === current ? "now" : ""} ${i === current ? "cur" : ""} ${fresh ? "pop" : ""}">${h(p)}</span>`;
   }).join("")}</div>`;
+}
+
+// The names row scrolls sideways when it overflows; keep the current person in the middle of it.
+function centreChip() {
+  const row = app.querySelector(".chips"), chip = row?.querySelector(".chip.cur");
+  if (row && chip && row.scrollWidth > row.clientWidth) row.scrollLeft = chip.offsetLeft - (row.clientWidth - chip.offsetWidth) / 2;
 }
 
 // Letters as separate pieces, so CSS can pop them in and out one by one.
@@ -335,6 +341,7 @@ function renderSetup() {
   app.innerHTML = `
     <div class="brand">${logo()} <span class="bar"><button type="button" class="lang" id="lang">${t("other").toUpperCase()}</button><button type="button" id="to-join">${t("join")}</button></span></div>
     <form class="setup" id="setup" novalidate>
+      <div class="fields">
       <fieldset>
         <span class="label">${t("people")}</span>
         ${listRows("people", t("name"))}
@@ -353,6 +360,7 @@ function renderSetup() {
           <button type="button" id="wk-next" aria-label="${t("later")}">›</button>
         </div>
       </fieldset>
+      </div>
       <div class="error" id="err"></div>
       <button type="submit" class="primary" data-flip style="--vtn:start">${t("start")}</button>
     </form>`;
@@ -521,6 +529,7 @@ function renderTurn() {
     </div>`;
 
   bindGrid(g, w, me);
+  centreChip();
   document.getElementById("pass").onclick = () => {
     S.history.push(JSON.stringify({ recs: g.recs, turn: me }));
     setRec(g, w, me, { done: true });
@@ -839,6 +848,7 @@ function renderNet() {
     ${foot}`;
 
   bindGrid(g, w, me);
+  centreChip();
   bindInvite(); bindFoot();
   const submit = document.getElementById("submit");
   if (submit) submit.onclick = () => { setRec(g, w, me, { done: true }); render(); broadcast(); window.scrollTo(0, 0); };

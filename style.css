@@ -73,8 +73,9 @@ body::before, body::after {
 body::before { top: -230px; right: -150px; }
 body::after { top: -170px; right: -290px; }
 .app {
-  /* The visible screen, not iOS's toolbar-less 100%, so a short screen fits without scrolling. */
-  max-width: 480px; margin: 0 auto; min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  /* Every screen is exactly the visible screen: header on top, action at the bottom, and one
+     part in between that gives or takes the space. The page itself never scrolls. */
+  max-width: 480px; margin: 0 auto; height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: hidden;
   padding-inline: 16px; padding-block: 20px 28px;
   display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;
 }
@@ -120,8 +121,19 @@ input::placeholder { color: var(--muted); opacity: 0.7; }
 .icon-btn:hover { color: var(--accent); }
 
 fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
-.setup { display: flex; flex-direction: column; gap: 22px; }
-.join { display: flex; flex-direction: column; gap: 12px; }
+.app > * { flex: none; }
+.setup { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+/* The fields scroll on their own, with soft edges so it is clear there is more. */
+.setup .fields {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 22px;
+  padding: 8px 10px 20px; margin-inline: -10px;
+  mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 24px), transparent);
+}
+.setup .error { min-height: 0; }
+.setup .error:empty { display: none; }
+.join { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.join .primary { margin-top: auto; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row .num {
   width: 30px; height: 30px; flex: none; border-radius: 50%; border: 2.5px solid var(--line);
@@ -144,13 +156,17 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 
 /* week grid: every slot is a round set you can join */
 .week { display: grid; gap: 8px; }
+/* The grid takes the height that is left, up to a comfortable size; its rows share it evenly. */
+.app > .week { flex: 1 1 0; min-height: 0; max-height: 470px; grid-template-rows: auto repeat(7, minmax(0, 1fr)); }
+/* Whatever is left over sits above the names, so the action stays at the bottom. */
+.app > .chips { margin-top: auto; }
 .week .head { font-family: var(--font-display); font-size: 11px; font-weight: 700; text-align: center; text-transform: uppercase; letter-spacing: 0.08em; overflow-wrap: anywhere; }
 .week .day { font-weight: 700; align-self: center; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .week .day span { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
 .week .day.weekend { color: var(--accent); }
 .cell {
   position: relative; isolation: isolate; overflow: hidden;
-  height: 46px; min-width: 0; padding: 4px; border-radius: 999px;
+  height: auto; min-height: 0; min-width: 0; padding: 2px 4px; border-radius: 999px;
   background: var(--surface); border: var(--rule) solid var(--line); color: var(--ink);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   font-size: 15px; font-weight: 700;
@@ -165,7 +181,13 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 /* Each initial is set in its owner's typeface. */
 .cell .ini b { font-family: var(--name-font, inherit); font-weight: 400; letter-spacing: 0; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips {
+  display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
+  padding: 4px 10px 8px; margin-inline: -10px;
+  mask-image: linear-gradient(to right, transparent, #000 10px, #000 calc(100% - 10px), transparent);
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; white-space: nowrap; }
 .chip { will-change: transform; font-size: 14px; font-weight: 700; padding: 3px 12px; border-radius: 999px; border: 2.5px dashed var(--muted); color: var(--muted); }
 .chip.ok { border: 2.5px solid var(--line); background: var(--me); color: var(--on-me); }
 .chip.ok::before { content: "✓ "; }
@@ -178,6 +200,9 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 
 /* result */
 .options { display: flex; flex-direction: column; gap: 8px; }
+.app > .venn { flex: 1 1 0; min-height: 120px; width: 100%; max-width: none; height: auto; max-height: 380px; }
+.app > .options { flex: 0 1 auto; min-height: 0; max-height: 34%; overflow-y: auto; padding: 4px; margin: -4px; }
+.app > .stack { margin-top: auto; }
 .option { background: var(--surface); border: var(--rule) solid var(--line); color: var(--ink); padding: 13px 20px; text-align: left; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .option .d { font-weight: 700; }
 .option .p { color: var(--muted); }
@@ -187,7 +212,7 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 
 /* rooms */
 .center { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
-.qr { background: #ffffff; padding: 10px; border: var(--rule) solid var(--line); border-radius: 28px; width: min(100%, 320px); margin-inline: auto; box-sizing: border-box; box-shadow: 6px 6px 0 var(--blue); }
+.qr { background: #ffffff; padding: 10px; border: var(--rule) solid var(--line); border-radius: 28px; width: min(100%, 320px, 44dvh); margin-inline: auto; box-sizing: border-box; box-shadow: 6px 6px 0 var(--blue); }
 .qr svg { display: block; width: 100%; height: auto; cursor: pointer; }
 /* Fixed colours: cameras need dark marks on white in either theme. */
 .qr-dot { fill: #16141d; }
@@ -197,6 +222,7 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .qr-eye.e1 .qr-pupil { fill: #1f57c9; }
 .qr-eye.e2 .qr-pupil { fill: #0b7f74; }
 .people { display: flex; flex-direction: column; gap: 10px; }
+.app > .people { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 10px 12px; margin-inline: -10px; }
 .person { background: var(--surface); border: var(--rule) solid var(--line); color: var(--ink); padding: 14px 22px; font-family: var(--font-display); font-size: 18px; font-weight: 700; text-align: left; display: flex; justify-content: space-between; align-items: center; }
 .person span { font-family: var(--font-body); font-size: 14px; font-weight: 400; color: var(--muted); }
 .person:disabled { opacity: 0.45; border-style: dashed; cursor: default; }
@@ -456,4 +482,16 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
+
+/* Short screens: tighter spacing, a smaller name and no hint, so the week grid keeps usable rows. */
+@media (max-height: 720px) {
+  .app { gap: 12px; padding-block: 12px 14px; }
+  .who { font-size: clamp(28px, 9vw, 38px); }
+  .who-sub { display: none; }
+  .done-head { font-size: clamp(22px, 7vw, 28px); }
+  .primary, .secondary { padding-block: 13px; }
+  .week { gap: 5px; }
+  .week .day { font-size: 14px; }
+  .week .day span { font-size: 11px; }
 }

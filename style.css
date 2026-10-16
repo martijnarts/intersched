@@ -437,9 +437,6 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   @keyframes qr-in { from { transform: scale(0.4); opacity: 0; } }
 
   /* ---- the result, heaviest: a replay of the session ---- */
-  .done-head.enter { animation: none; }
-  .done-head.enter .w { display: inline-block; animation: word-up 620ms cubic-bezier(0.2, 1.5, 0.4, 1) both; animation-delay: calc(var(--b, 0ms) + (sibling-index() - 1) * 80ms); }
-  @keyframes word-up { from { transform: translateY(26px) rotate(-6deg) scale(0.8); opacity: 0; text-shadow: 4px 3px 0 var(--yellow); } }
   .venn .v-set, .venn .v-line, .venn .v-label, .venn .v-bit, .venn .v-count { transform-box: fill-box; transform-origin: center; }
   /* Each set's flight direction comes from its angle; its turn comes from where it sits in finishing order. */
   .venn .v-set, .venn .v-line { --dx: calc(cos(var(--a)) * 70px); --dy: calc(sin(var(--a)) * 70px); --turn: calc(sibling-index() - 1); }

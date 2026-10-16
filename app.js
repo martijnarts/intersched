@@ -178,10 +178,18 @@ function morph(kind, update) {
 // Animations on a new screen wait for the screen change to finish growing in.
 const settle = () => (document.documentElement.classList.contains("vt") ? 450 : 0);
 
+// Scroll areas that keep their place when the same screen redraws, say after a row moves.
+const SCROLLERS = [".fields", ".app > .options", ".app > .people"];
+let scrolled = { view: null, tops: [] };
+
 function draw() {
+  const view = viewKey();
+  if (scrolled.view === view) scrolled.tops = SCROLLERS.map((q) => app.querySelector(q)?.scrollTop || 0);
   curInks = !NET && (S.screen === "setup" || S.screen === "join") ? S.draft.inks : S.game?.setup?.inks || null;
   try { (NET ? renderNet : { setup: renderSetup, join: renderJoin, turn: renderTurn, done: renderDone }[S.screen])(); }
   catch (e) { console.error(e); if (NET) throw e; S = fresh(S); renderSetup(); }
+  if (scrolled.view === view) SCROLLERS.forEach((q, i) => { const el = app.querySelector(q); if (el && scrolled.tops[i]) el.scrollTop = scrolled.tops[i]; });
+  scrolled = { view, tops: [] };
   save();
 }
 
@@ -236,7 +244,7 @@ function gridHtml(g, w, viewer, editable, live = false) {
   const n = g.setup.slots.length, open = openFor(g, w, viewer), mine = picks(g, w, viewer);
   const others = live ? g.setup.people.map((_, p) => p).filter((p) => p !== viewer).map((p) => [p, picks(g, w, p)]) : [];
   const tag = tags(g.setup.people);
-  const key = `${w} ${viewer} ${S.screen}`, before = seenOpen.get(key);
+  const key = `${g.setup.ts} ${w} ${viewer} ${S.screen}`, before = seenOpen.get(key);
   seenOpen.set(key, open);
   let stamps = 0;
   let out = `<div></div>` + g.setup.slots.map((s) => `<div class="head">${h(s)}</div>`).join("");
@@ -279,7 +287,7 @@ function leftAfter(g, w, viewer) {
 
 function chipsHtml(g, w, current) {
   return `<div class="chips">${g.setup.people.map((p, i) => {
-    const done = !!recOf(g, w, i)?.done, key = `${w}:${i}`, fresh = done && !seenDone.has(key);
+    const done = !!recOf(g, w, i)?.done, key = `${g.setup.ts}:${w}:${i}`, fresh = done && !seenDone.has(key);
     if (done) seenDone.add(key); else seenDone.delete(key);
     return `<span class="chip ${ink(i)} ${done ? "ok" : i === current ? "now" : ""} ${i === current ? "cur" : ""} ${fresh ? "pop" : ""}">${h(p)}</span>`;
   }).join("")}</div>`;
@@ -512,7 +520,7 @@ function renderTurn() {
   const others = P.map((_, i) => i).filter((i) => i !== me && !recOf(g, w, i)?.done);
   const btn = left === 0 ? t("noneWork") : others.length ? t("passTo", P[nextTurn(g, w, me)]) : t("done");
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
-  const turnFresh = enterOnce("who", `turn ${w} ${me}`);
+  const turnFresh = enterOnce("who", `turn ${g.setup.ts} ${w} ${me}`);
 
   app.innerHTML = `
     <div class="brand">${logo()} <span class="bar"><button type="button" id="share">${t("share")}</button></span></div>
@@ -612,7 +620,7 @@ function doneHtml(g, w, foot) {
   const label = (idx) => ({ d: fmtDay(addDays(g.setup.start, 7 * w + Math.floor(idx / n))), p: g.setup.slots[idx % n] });
   const sel = label(S.sel);
   const selDay = addDays(g.setup.start, 7 * w + Math.floor(S.sel / n)).toLocaleDateString(t("locale"), { weekday: "short", day: "numeric", month: "short" });
-  const fresh = enterOnce("venn", `done ${w}`), freshLabel = enterOnce("label", `${w} ${S.sel}`);
+  const fresh = enterOnce("venn", `done ${g.setup.ts} ${w}`), freshLabel = enterOnce("label", `${g.setup.ts} ${w} ${S.sel}`);
   // Finishing order, and what still worked for everyone after each person.
   const order = g.setup.people.map((_, p) => p).sort((a, b) => (recOf(g, w, a)?.ts || 0) - (recOf(g, w, b)?.ts || 0));
   let still = null;
@@ -622,9 +630,7 @@ function doneHtml(g, w, foot) {
     return still.size;
   });
   const base = settle(), land = landAt(base, order.length);
-  const words = t("result", open.length).split(" ").map((x) => `<span class="w">${x}</span>`).join(" ");
   return `
-    <div class="done-head ${enterOnce("head", `done ${w}`)}" style="--b:${land}ms">${words}</div>
     ${vennHtml(g.setup.people, selDay, sel.p, { fresh, freshLabel, order, counts, base })}
     <div class="options ${fresh}" style="--land:${land}ms">${open.map((idx, i) => { const l = label(idx); return `<button class="option ${idx === S.sel ? "sel" : ""} ${idx === S.sel && freshLabel && !fresh ? "pop" : ""}" data-opt="${idx}"><span class="d">${l.d}</span><span class="p">${h(l.p)}</span></button>`; }).join("")}</div>
     <div class="stack ${fresh}" style="--land:${land}ms">
@@ -832,7 +838,7 @@ function renderNet() {
   const me = S.me, done = !!recOf(g, w, me)?.done, left = leftAfter(g, w, me);
   const waiting = P.filter((_, i) => i !== me && !recOf(g, w, i)?.done);
   const btn = left === 0 ? t("noneWork") : waiting.length ? t("imDone") : t("done");
-  const ownFresh = enterOnce("who", `own ${w} ${me}`);
+  const ownFresh = enterOnce("who", `own ${g.setup.ts} ${w} ${me}`);
 
   app.innerHTML = `
     ${bar(`<button id="invite">${t("share")}</button>`)}

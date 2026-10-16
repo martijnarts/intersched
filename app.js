@@ -594,7 +594,7 @@ function bindDone() {
 function renderDone() {
   const g = S.game, w = currentWeek(g);
   app.innerHTML = `
-    <div class="brand">${logo()} <small>${fmtRange(g.setup.start, w)}</small></div>
+    <div class="brand">${logo()}</div>
     ${doneHtml(g, w, `<div class="foot"><button id="undo">${h(t("backTo", g.setup.people[S.turn]))}</button><button id="reset">${t("startOver")}</button></div>`)}`;
   bindDone();
   document.getElementById("undo").onclick = undo;

@@ -51,14 +51,16 @@
 }
 
 :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
-html, body { height: 100%; }
 [hidden] { display: none !important; }
-body {
-  margin: 0; color: var(--ink);
-  /* Graph paper, where Venn diagrams get drawn. */
+/* Graph paper, where Venn diagrams get drawn. It sits on html, so it covers the whole canvas,
+   behind the home bar and any overscroll too. */
+html {
   background-color: var(--bg);
   background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 24px 24px;
+}
+body {
+  margin: 0; color: var(--ink); background: transparent;
   font-family: var(--font-body); font-size: 17px; line-height: 1.45;
   overflow-x: hidden;
 }
@@ -71,7 +73,8 @@ body::before, body::after {
 body::before { top: -230px; right: -150px; }
 body::after { top: -170px; right: -290px; }
 .app {
-  max-width: 480px; margin: 0 auto; min-height: 100%;
+  /* The visible screen, not iOS's toolbar-less 100%, so a short screen fits without scrolling. */
+  max-width: 480px; margin: 0 auto; min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   padding-inline: 16px; padding-block: 20px 28px;
   display: flex; flex-direction: column; gap: 20px; box-sizing: border-box;
 }
@@ -233,7 +236,9 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .s9 { fill: var(--lime); }
 .logo circle, .venn .v-set { mix-blend-mode: var(--blend); }
 .logo circle { stroke: var(--line); stroke-width: 2.5; fill-opacity: 0.85; }
-.venn { display: block; width: min(100%, 320px); height: auto; margin-inline: auto; overflow: visible; isolation: isolate; }
+/* Above the options, so the burst flies over them; the dots never catch a tap. */
+.venn { display: block; width: min(100%, 320px); height: auto; margin-inline: auto; overflow: visible; isolation: isolate; position: relative; z-index: 1; }
+.venn .v-bit { pointer-events: none; }
 .venn .v-set { fill-opacity: calc(var(--set-opacity) * var(--crowd, 1)); stroke: none; }
 .venn.crowd .v-day { font-size: 12px; }
 .venn.crowd .v-slot { font-size: 10px; }

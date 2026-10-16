@@ -210,8 +210,6 @@ const inkNum = (i) => (curInks?.[i] ?? i) % INKS;
 const ink = (i) => `p${inkNum(i)}`;
 // Slots seen open before, per week and viewer, so a slot that just dropped out gets stamped.
 const seenOpen = new Map();
-// The count shown last, per view, so it ticks only when it changes on the same screen.
-let lastCount = null;
 // The cell tapped last, so only that one plays its fill.
 let justTapped = null, tapAt = null;
 // The row just added, for its drop-in animation.
@@ -273,12 +271,6 @@ function bindGrid(g, w, viewer) {
   });
 }
 
-function countHtml(view, left, total, suffix) {
-  const dir = lastCount?.view === view && lastCount.left !== left ? (left < lastCount.left ? "down" : "up") : "";
-  lastCount = { view, left };
-  return `<div class="count">${t("left", left, total).replace("<b>", `<b class="${dir}">`)}${suffix}</div>`;
-}
-
 // What still works for everyone once `viewer` commits their current picks.
 function leftAfter(g, w, viewer) {
   const open = openFor(g, w, viewer), mine = picks(g, w, viewer);
@@ -293,9 +285,16 @@ function chipsHtml(g, w, current) {
   }).join("")}</div>`;
 }
 
-function rolledNotice(g, w) {
-  return w > 0 && weekInfo(g, w).done.length === 0
-    ? `<div class="notice ${enterOnce("notice", `rolled ${w}`)}">${t("rolled", fmtRange(g.setup.start, w - 1))}</div>` : "";
+// Letters as separate pieces, so CSS can pop them in and out one by one.
+const letters = (text) => [...text].map((ch) => `<span class="ch">${ch === " " ? "&nbsp;" : h(ch)}</span>`).join("");
+
+// The name header. On the first turn of a week that rolled over it first says "Next week!", pops
+// those letters back out and pops the name in; otherwise it is just the name.
+function whoHtml(name, rolling) {
+  if (!rolling) return `<div class="who">${h(name)}</div>`;
+  const msg = t("onwards");
+  return `<div class="who rolling" role="heading" aria-label="${h(name)}" style="--b:${settle()}ms;--m:${[...msg].length}">
+    <span class="who-msg" aria-hidden="true">${letters(msg)}</span><span class="who-name" aria-hidden="true">${letters(name)}</span></div>`;
 }
 
 function bindTwoTap(id, label, action) {
@@ -326,8 +325,8 @@ function renderSetup() {
   const vtName = (key, i) => (key === "people" ? `person-${D.inks[i]}` : `slot-${D.slotIds[i]}`);
   // The × buttons stay out of the tab order, so Tab and the keyboard's next key go name to name.
   const listRows = (key, ph) => D[key].map((v, i) => `
-    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}" data-flip style="--vtn:${vtName(key, i)}">
-      <span class="num">${i + 1}</span>
+    <div class="row ${key === "people" ? `named ${ink(i)}` : ""} ${newRow === `${key}-${i}` ? "new" : ""}" data-flip data-list="${key}" data-i="${i}" style="--vtn:${vtName(key, i)}">
+      <span class="num" data-grab role="button" tabindex="-1" aria-label="${t("drag")}">${i + 1}</span>
       <input id="${key}-${i}" data-key="${key}" data-i="${i}" value="${h(v)}" placeholder="${ph}" autocomplete="off" enterkeyhint="next">
       <button type="button" class="icon-btn" data-del="${key}" data-i="${i}" tabindex="-1" aria-label="${t("remove")}">×</button>
     </div>`).join("");
@@ -364,6 +363,13 @@ function renderSetup() {
     });
     // Enter moves to the next row. On the last filled row it adds one.
     el.addEventListener("keydown", (e) => {
+      // Alt with an arrow moves the row up or down, the keyboard version of dragging it.
+      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const k = el.dataset.key, i = +el.dataset.i, to = i + (e.key === "ArrowUp" ? -1 : 1);
+        if (to < 0 || to >= D[k].length) return;
+        return moveRow(k, i, to, true);
+      }
       if (e.key !== "Enter") return;
       e.preventDefault();
       const k = el.dataset.key, i = +el.dataset.i;
@@ -394,6 +400,44 @@ function renderSetup() {
       document.getElementById(`${k}-${D[k].length - 1}`).focus();
     });
   });
+  // Moves a row, with its ink or slot id, and lets the flow transition settle everything into place.
+  const moveRow = (k, from, to, keepFocus = false) => morph("flow", () => {
+    if (from !== to) {
+      const ids = k === "people" ? D.inks : D.slotIds;
+      D[k].splice(to, 0, D[k].splice(from, 1)[0]);
+      ids.splice(to, 0, ids.splice(from, 1)[0]);
+    }
+    render();
+    // The update runs a few frames later, so the moved field takes focus here, not after the call.
+    if (keepFocus) document.getElementById(`${k}-${to}`)?.focus();
+  });
+
+  // Dragging a row by its number: the row follows the finger, the others step aside to open a gap.
+  // Script only feeds positions to CSS; CSS does the moving.
+  app.querySelectorAll("[data-grab]").forEach((handle) => handle.onpointerdown = (e) => {
+    const row = handle.closest(".row"), k = row.dataset.list, from = +row.dataset.i;
+    const rows = [...app.querySelectorAll(`.row[data-list="${k}"]`)];
+    if (rows.length < 2) return;
+    e.preventDefault();
+    const pitch = rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top, y0 = e.clientY;
+    let to = from;
+    handle.setPointerCapture(e.pointerId);
+    row.classList.add("dragging");
+    handle.onpointermove = (ev) => {
+      const dy = ev.clientY - y0;
+      row.style.setProperty("--drag", `${dy}px`);
+      to = Math.max(0, Math.min(rows.length - 1, from + Math.round(dy / pitch)));
+      rows.forEach((r, j) => {
+        const shift = from < to && j > from && j <= to ? -1 : from > to && j < from && j >= to ? 1 : 0;
+        if (j !== from) r.style.setProperty("--shift", `${shift * pitch}px`);
+      });
+    };
+    handle.onpointerup = handle.onpointercancel = () => {
+      handle.onpointermove = handle.onpointerup = handle.onpointercancel = null;
+      moveRow(k, from, to);
+    };
+  });
+
   const step = (days, dir) => () => morph(dir, () => { D.start = iso(addDays(D.start, days)); render(); });
   document.getElementById("wk-prev").onclick = step(-7, "step-back");
   document.getElementById("wk-next").onclick = step(7, "step-on");
@@ -460,16 +504,15 @@ function renderTurn() {
   const others = P.map((_, i) => i).filter((i) => i !== me && !recOf(g, w, i)?.done);
   const btn = left === 0 ? t("noneWork") : others.length ? t("passTo", P[nextTurn(g, w, me)]) : t("done");
   const prev = S.history.length ? JSON.parse(S.history.at(-1)).turn : null;
+  const turnFresh = enterOnce("who", `turn ${w} ${me}`);
 
   app.innerHTML = `
-    <div class="brand">${logo()} <span class="bar"><small>${fmtRange(g.setup.start, w)}</small><button type="button" id="share">${t("share")}</button></span></div>
-    ${rolledNotice(g, w)}
-    <div class="${enterOnce("who", `turn ${w} ${me}`)} ${ink(me)}">
-      <div class="who">${h(P[me])}</div>
+    <div class="brand">${logo()} <span class="bar"><button type="button" id="share">${t("share")}</button></span></div>
+    <div class="${turnFresh} ${ink(me)}">
+      ${whoHtml(P[me], turnFresh && w > 0 && info.done.length === 0)}
       <div class="who-sub">${t("tapHint")}</div>
     </div>
     ${gridHtml(g, w, me, true)}
-    ${countHtml(`turn ${w} ${me}`, left, openFor(g, w, me).size, info.done.length ? t("andBefore") : "")}
     ${chipsHtml(g, w, me)}
     <button class="primary" id="pass">${h(btn)}</button>
     <div class="foot">
@@ -780,17 +823,15 @@ function renderNet() {
   const me = S.me, done = !!recOf(g, w, me)?.done, left = leftAfter(g, w, me);
   const waiting = P.filter((_, i) => i !== me && !recOf(g, w, i)?.done);
   const btn = left === 0 ? t("noneWork") : waiting.length ? t("imDone") : t("done");
+  const ownFresh = enterOnce("who", `own ${w} ${me}`);
 
   app.innerHTML = `
     ${bar(`<button id="invite">${t("share")}</button>`)}
-    ${rolledNotice(g, w)}
-    <div class="me-line"><span class="label">${fmtRange(g.setup.start, w)}</span></div>
-    <div class="${enterOnce("who", `own ${w} ${me}`)} ${ink(me)}">
-      <div class="who">${h(P[me])}</div>
+    <div class="${ownFresh} ${ink(me)}">
+      ${whoHtml(P[me], ownFresh && w > 0 && info.done.length === 0)}
       <div class="who-sub">${done ? t("picksIn") : t("tapHint")}</div>
     </div>
     ${gridHtml(g, w, me, !done, true)}
-    ${countHtml(`own ${w} ${me}`, left, openFor(g, w, me).size, info.done.filter((p) => p !== me).length ? t("andDone") : "")}
     ${chipsHtml(g, w, me)}
     ${done
       ? `<div class="wait">${h(t("waitingFor", list(waiting)))}</div><button class="secondary" id="edit">${t("edit")}</button>`

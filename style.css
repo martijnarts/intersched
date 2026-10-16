@@ -82,13 +82,16 @@ body::after { top: -170px; right: -290px; }
 .label { font-family: var(--font-display); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink); }
 .who { font-family: var(--font-display); font-weight: 800; font-size: clamp(34px, 11vw, 52px); line-height: 1.02; letter-spacing: -0.03em; overflow-wrap: anywhere; text-shadow: 3px 3px 0 var(--me, var(--yellow)); }
 .who-sub { color: var(--muted); margin-top: 8px; }
+/* A rolled-over week: the message and the name share one spot, so nothing below moves. */
+.who.rolling { display: grid; }
+.who.rolling > span { grid-area: 1 / 1; }
+.who .ch { display: inline-block; }
+.who-msg { display: none; font-family: var(--font-display); font-weight: 800; font-size: 0.7em; white-space: nowrap; align-self: center; }
 .done-head { font-family: var(--font-display); font-weight: 800; font-size: clamp(26px, 8vw, 36px); line-height: 1.08; letter-spacing: -0.03em; text-wrap: balance; text-shadow: 3px 3px 0 var(--yellow); }
 .words { font-family: var(--font-display); font-weight: 800; font-size: clamp(22px, 7vw, 30px); line-height: 1.2; text-align: center; text-wrap: balance; user-select: all; }
 .hint, .wait { font-size: 15px; color: var(--muted); }
 .wait { text-align: center; }
 .error { font-size: 14px; font-weight: 700; color: var(--accent); min-height: 1.2em; }
-.count { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.count b { color: var(--ink); font-family: var(--font-display); }
 
 /* controls */
 button { font: inherit; color: inherit; cursor: pointer; border: 0; border-radius: 999px; background: transparent; }
@@ -194,7 +197,6 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .person { background: var(--surface); border: var(--rule) solid var(--line); color: var(--ink); padding: 14px 22px; font-family: var(--font-display); font-size: 18px; font-weight: 700; text-align: left; display: flex; justify-content: space-between; align-items: center; }
 .person span { font-family: var(--font-body); font-size: 14px; font-weight: 400; color: var(--muted); }
 .person:disabled { opacity: 0.45; border-style: dashed; cursor: default; }
-.me-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 
 /* Venn: the logo mark and the result diagram */
 .logo { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
@@ -214,6 +216,11 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 .who, .chip, .person, .row.named input { font-family: var(--name-font, var(--font-display)); font-weight: 400; }
 .who { font-weight: 400; letter-spacing: 0; }
 .row.named .num { background: var(--me); color: var(--on-me); }
+/* The number is the drag handle. */
+.row .num[data-grab] { cursor: grab; touch-action: none; user-select: none; }
+.row { translate: 0 var(--shift, 0px); }
+.row.dragging { position: relative; z-index: 2; translate: 0 var(--drag, 0px); }
+.row.dragging .num { cursor: grabbing; }
 .s0 { fill: var(--pink); }
 .s1 { fill: var(--blue); }
 .s2 { fill: var(--yellow); }
@@ -285,13 +292,12 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
     46% { border-style: dashed; color: var(--muted); transform: scale(1.18); }
     100% { transform: scale(1); }
   }
-  /* The count is the size of the intersection; it drops in when it shrinks and rises when it grows. */
-  .count b { display: inline-block; }
-  .count b.down { animation: tick-down 360ms cubic-bezier(0.3, 1.5, 0.5, 1); }
-  .count b.up { animation: tick-up 360ms cubic-bezier(0.3, 1.5, 0.5, 1); }
-  @keyframes tick-down { from { transform: translateY(-70%); opacity: 0; } }
-  @keyframes tick-up { from { transform: translateY(70%); opacity: 0; } }
 
+  /* Dragging: the held row lifts in its ink and tilts a touch; the others glide aside. */
+  .row { transition: translate 220ms cubic-bezier(0.2, 1.2, 0.4, 1); }
+  .row.dragging { transition: none; rotate: -1.5deg; }
+  .row.dragging .num { scale: 1.2; transition: scale 160ms cubic-bezier(0.3, 1.6, 0.5, 1); }
+  .row.dragging input { box-shadow: 6px 6px 0 var(--me, var(--pink)); }
   .row.new { animation: row-in 360ms cubic-bezier(0.2, 1.4, 0.4, 1) both; }
   @keyframes row-in { from { transform: translateY(-8px) scale(0.92); opacity: 0; } }
   .row.leaving { pointer-events: none; }
@@ -315,7 +321,8 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   html[data-vt="flow"]::view-transition-old(root), html[data-vt="flow"]::view-transition-new(root) { animation: none; }
   html[data-vt="flow"]::view-transition-group(*) { animation-duration: 380ms; animation-timing-function: cubic-bezier(0.2, 1.25, 0.4, 1); }
   html[data-vt="flow"]::view-transition-old(*), html[data-vt="flow"]::view-transition-new(*) { animation: none; mix-blend-mode: normal; }
-  html[data-vt="flow"]::view-transition-old(*):not(:only-child) { opacity: 0; }
+  /* Only the new picture moves; a removed row has already popped away, so no old picture is needed. */
+  html[data-vt="flow"]::view-transition-old(*) { opacity: 0; }
   @keyframes wk-in-right { from { transform: translateX(260px); } }
   @keyframes wk-in-left { from { transform: translateX(-260px); } }
   @keyframes wk-out-left { to { transform: translateX(-260px); } }
@@ -327,8 +334,6 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
   @keyframes opt-pick { 0% { transform: scale(0.97); } 50% { transform: scale(1.03); } }
   .error.shake { animation: shake 380ms ease; }
   @keyframes shake { 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
-  .notice.enter { animation: drop 520ms cubic-bezier(0.2, 1.5, 0.4, 1) both; }
-  @keyframes drop { from { transform: translateY(-14px) scale(0.9); opacity: 0; } }
 
   /* ---- ambient ---- */
   .logo.meet .s0 { animation: meet-left 900ms cubic-bezier(0.3, 1.5, 0.5, 1) both; }
@@ -373,6 +378,25 @@ fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: colu
 
   .enter { animation: enter 420ms cubic-bezier(0.2, 1.1, 0.3, 1) both; }
   @keyframes enter { from { transform: translateY(14px); opacity: 0; } }
+  /* Next week: "Next week!" pops in letter by letter, pops back out from the start, left to right, like a
+     bubbly backspace, then the name pops in. One timeline from --b; nothing waits on a timer. */
+  .who.rolling { --in: 55ms; --hold: 750ms; --out: 40ms; --gone: calc(var(--b) + var(--m) * var(--in) + var(--hold) + var(--m) * var(--out) + 280ms); }
+  .who.rolling .who-msg { display: block; }
+  .who.rolling .ch { transform-origin: 50% 85%; }
+  .who-msg .ch {
+    animation: ch-in 420ms cubic-bezier(0.3, 1.7, 0.5, 1) both, ch-out 300ms linear forwards;
+    animation-delay: calc(var(--b) + (sibling-index() - 1) * var(--in)),
+      calc(var(--b) + var(--m) * var(--in) + var(--hold) + (sibling-index() - 1) * var(--out));
+  }
+  .who-name .ch { animation: ch-in 440ms cubic-bezier(0.3, 1.7, 0.5, 1) both; animation-delay: calc(var(--gone) + (sibling-index() - 1) * 75ms); }
+  @keyframes ch-in { from { transform: translateY(0.45em) scale(0); opacity: 0; } 60% { transform: translateY(-0.08em) scale(1.25); opacity: 1; } }
+  /* A pop, not a zoom: each letter swells like a bubble, then bursts. */
+  @keyframes ch-out {
+    0% { transform: scale(1); animation-timing-function: cubic-bezier(0.2, 0.8, 0.3, 1); }
+    55% { transform: translateY(-0.12em) scale(1.45) rotate(-4deg); opacity: 1; animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.4); }
+    100% { transform: translateY(-0.2em) scale(0.15) rotate(-10deg); opacity: 0; }
+  }
+
   /* Your ink settles into register under your name. */
   .enter .who { animation: register 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms both; }
   @keyframes register { from { text-shadow: 16px 12px 0 var(--me, var(--yellow)); letter-spacing: 0.04em; } to { text-shadow: 3px 3px 0 var(--me, var(--yellow)); } }
